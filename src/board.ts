@@ -167,8 +167,7 @@ export function buildBoardWiql(types: readonly string[], iterationPath: string, 
 
 /**
  * The id of the PAT's owner. Not required: a failure only means no item reads as `mine`.
- * UNVERIFIED against the real API: whether `7.1-preview` is needed; the plain call is believed
- * to work on dev.azure.com.
+ * Called without an `api-version`.
  */
 async function fetchMe(
   conn: Connection,

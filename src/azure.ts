@@ -7,7 +7,7 @@ export type FetchLike = (url: string, init: RequestInit) => Promise<Response>
 export const HOST = 'https://dev.azure.com'
 export const API_VERSION = '7.1'
 
-/** WIQL returns at most this many ids, which is also the batch endpoint's limit. */
+/** The most ids asked of the WIQL query (`$top`) and sent in one batch call. */
 export const MAX_ITEMS = 200
 
 const REQUEST_TIMEOUT_MS = 20_000
@@ -103,7 +103,7 @@ export function parseStates(raw: unknown): string[] {
     .filter(Boolean)
 }
 
-/** Basic with an empty user name, as Azure DevOps documents for PATs. */
+/** Basic auth with an empty user name and the PAT as the password. */
 export function authorization(pat: string): string {
   return `Basic ${btoa(`:${pat}`)}`
 }
@@ -247,7 +247,7 @@ export async function request(
   signal?: AbortSignal
 ): Promise<Outcome> {
   const outcome = await requestWithStatus(fetchImpl, method, url, body, pat, signal)
-  // The status stays inside the worker: what is returned to callers (and the panel) is unchanged.
+  // Drops the status: callers of `request` only see the error.
   return outcome.ok ? outcome : { ok: false, error: outcome.error }
 }
 
@@ -273,8 +273,8 @@ const LEADING_BRACKET = /^\s*\[([^\]]*)\]/
 const LEADING_SEPARATOR = /^\s*[-–—:|]\s*/
 
 /**
- * Removes the leading `[...]` prefixes that name a segment of the area path (the team usually
- * repeats its own name in the title), with the separator that follows. In a compound bracket such
+ * Removes the leading `[...]` prefixes that name a segment of the area path, with the separator
+ * that follows. In a compound bracket such
  * as `[Area | 1234 | Service]` only the leading parts that name the area go: `[1234 | Service]`.
  * A bracket that does not start with an area segment (`[BUG]`) stays, and so does the original
  * title when nothing else would be left.
@@ -573,8 +573,8 @@ export async function listProjects(
     const url: string = token ? `${base}&continuationToken=${encodeURIComponent(token)}` : base
     const answer = await request(fetchImpl, 'GET', url, undefined, conn.pat, options.signal)
     if (!answer.ok) {
-      // Azure DevOps may answer 401 for a missing scope, so a refused PAT lands here too; the
-      // fallback's own query then reports the real error.
+      // A missing scope can read as `auth` or `scope`; the fallback's own query then reports the
+      // real error.
       const { kind } = answer.error
       if (page === 0 && (kind === 'auth' || kind === 'scope')) return projectsFromItems(conn, fetchImpl, options.signal)
       return { ok: false, error: answer.error }

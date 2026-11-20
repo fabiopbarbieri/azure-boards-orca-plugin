@@ -1,8 +1,8 @@
-// The search box of both tabs: finds items by number or by a piece of the title. Pure, so it is unit tested.
+// The search box: finds items by number or by a piece of the title. Pure, so it is unit tested.
 
 /** Lowercase without accents, so "operacoes" finds "Operações". */
 function fold(text: string): string {
-  return text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+  return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
 }
 
 /**

@@ -13,7 +13,7 @@ export type ColumnSection = {
 export type BoardLayout = {
   /** One section per column, in the board's order. */
   columns: ColumnSection[]
-  /** Items whose column matches none of the board's columns (a column renamed meanwhile). */
+  /** Items whose column matches none of the board's columns. */
   other: BoardItem[]
 }
 

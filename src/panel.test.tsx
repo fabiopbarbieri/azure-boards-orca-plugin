@@ -450,6 +450,8 @@ test('display: the prefix switch and the refresh interval are saved together', a
   const host = mockHost({ requests: w.requests })
   const view = await mount(panel, { host })
   await openSettings(view)
+  await openSection(view, 'Display')
+  await openSection(view, 'Refresh')
   assert.equal(view.valueOf({ label: 'Remove the area prefix from titles' }), true)
   assert.equal(view.valueOf({ label: 'Refresh every' }), '5')
   await view.toggle({ label: 'Remove the area prefix from titles' })
@@ -476,6 +478,7 @@ test('a failed Save stays on the screen with the draft and says so', async () =>
   const host = mockHost({ requests: w.requests })
   const view = await mount(panel, { host })
   await openSettings(view)
+  await openSection(view, 'Display')
   await view.toggle({ label: 'Remove the area prefix from titles' })
   await view.press({ text: 'Save' })
   assert.ok(view.find({ text: 'The settings were not saved.' }))
@@ -556,6 +559,9 @@ test('speaks Brazilian Portuguese', async () => {
   assert.ok(view.find({ label: 'Todos os projetos' }))
   assert.ok(view.find({ text: '1 selecionado' }))
   assert.ok(view.find({ text: /Só aparecem os projetos/ }))
+  assert.equal(view.find({ type: 'Collapsible', text: /^Exibição/ })?.props.description, 'Prefixo da área removido')
+  assert.equal(view.find({ type: 'Collapsible', text: /^Atualização/ })?.props.description, '5 minutos')
+  await openSection(view, 'Exibição')
   assert.ok(view.find({ label: 'Remover o prefixo da área dos títulos' }))
   assert.ok(view.find({ text: 'Salvar' }))
   assert.ok(view.find({ text: 'Voltar' }))
@@ -942,7 +948,7 @@ test('counters on the board follow the assignee, and speak Portuguese', async ()
 // ---------------------------------------------------------------------------------------------
 // Item actions
 
-test('actions: one item expands at a time, without opening the browser, and Close collapses it', async () => {
+test('actions: one item expands at a time, without opening the browser; pressing it again or Close collapses it', async () => {
   const w = worker(configured, listed(item(1, 'One'), item(2, 'Two')))
   const host = mockHost({ requests: w.requests })
   const view = await mount(panel, { host })
@@ -950,7 +956,11 @@ test('actions: one item expands at a time, without opening the browser, and Clos
   await view.press({ label: '#1 One' })
   assert.ok(view.find({ label: 'Open in browser' }))
   assert.ok(view.find({ type: 'Select', label: 'Move to' }))
-  assert.equal(view.find({ type: 'ListItem', label: '#1 One' })?.props.onPress, undefined)
+  // Pressing the open item again folds its actions.
+  await view.press({ label: '#1 One' })
+  assert.equal(view.find({ label: 'Open in browser' }), null)
+  await view.press({ label: '#1 One' })
+  assert.ok(view.find({ label: 'Open in browser' }))
   // Another item takes over.
   await view.press({ label: '#2 Two' })
   assert.equal(view.findAll({ label: 'Open in browser' }).length, 1)

@@ -79,7 +79,7 @@ export type BoardResult =
       iteration: { name: string; path: string }
       columns: BoardColumn[]
       items: BoardItem[]
-      /** More items matched than the plugin reads (it reads at most 200). */
+      /** The query returned 200 ids, the most the plugin reads, so more items may match. */
       truncated: boolean
       fetchedAt: number
     }
@@ -257,8 +257,9 @@ declare module 'orca' {
      */
     'start.options': { input: { id: number; locale: string }; output: StartOptionsResult }
     /**
-     * Sends the prompt to an open agent, or creates a worktree with a new agent that gets it, then
-     * shows that terminal or workspace. Remembers the Orca project per Azure project, and the agent.
+     * Sends the prompt to an open agent and focuses its terminal, or creates a worktree (opened) with
+     * a new agent that gets the prompt. For a worktree, remembers the agent and the Orca project
+     * per Azure project.
      */
     'start.run': { input: { id: number; project: string; prompt: string; target: StartTarget }; output: StartResult }
   }

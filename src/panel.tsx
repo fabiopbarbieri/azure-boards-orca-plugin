@@ -91,6 +91,9 @@ type Messages = {
   selectedCount: (n: number) => string
   noneSelected: string
   displaySection: string
+  prefixRemoved: string
+  prefixKept: string
+  refreshSection: string
   stripPrefix: string
   stripPrefixHelp: string
   refreshLabel: string
@@ -191,6 +194,9 @@ const EN: Messages = {
   selectedCount: (n) => `${n} selected`,
   noneSelected: 'No project selected: the list will be empty.',
   displaySection: 'Display',
+  prefixRemoved: 'Area prefix removed',
+  prefixKept: 'Full titles',
+  refreshSection: 'Refresh',
   stripPrefix: 'Remove the area prefix from titles',
   stripPrefixHelp: '“[Web Team] Fix login” shows as “Fix login”.',
   refreshLabel: 'Refresh every',
@@ -327,6 +333,9 @@ const PT: Messages = {
   selectedCount: (n) => (n === 1 ? '1 selecionado' : `${n} selecionados`),
   noneSelected: 'Nenhum projeto selecionado: a lista ficará vazia.',
   displaySection: 'Exibição',
+  prefixRemoved: 'Prefixo da área removido',
+  prefixKept: 'Títulos completos',
+  refreshSection: 'Atualização',
   stripPrefix: 'Remover o prefixo da área dos títulos',
   stripPrefixHelp: '“[Time Web] Ajustar login” aparece como “Ajustar login”.',
   refreshLabel: 'Atualizar a cada',
@@ -953,7 +962,6 @@ function closeStart(): void {
 
 const isOrcaError = (error: ListError | OrcaError): error is OrcaError => error.kind === 'capability' || error.kind === 'orca'
 
-/** The agent's default label: `<agent> · <workspace>`, plus the title and the state in words. */
 /** The agent's state at a glance, first in its option: free, waiting for an answer, working, blocked. */
 const AGENT_STATE_ICON: Record<OpenAgent['state'], string> = { done: '🟢', waiting: '🟡', working: '⏳', blocked: '🔴' }
 
@@ -962,6 +970,7 @@ function agentPlace(agent: OpenAgent): string {
   return agent.projectName || agent.workspaceName
 }
 
+/** An open agent in the Send to menu: `<state> <agent> · <project> · <title>`, the title when it has one. */
 function agentLabel(agent: OpenAgent): string {
   const m = t()
   const text = [agent.agent || m.agentFallback, agentPlace(agent), agent.title].filter(Boolean).join(' · ')
@@ -1083,7 +1092,7 @@ export function setup(ctx: PanelContext): void {
       set(config, view)
       const active = read(activeTab)
       const running = read(active === 'board' ? boardBusy : assignedBusy)
-      // On the config screen, or while a call runs, Done or that call shows the result.
+      // On the config screen, or while a call runs, Save or that call shows the result.
       if (read(screen).kind === 'config' || read(busy) || running) {
         ensureProjects()
         return
@@ -1217,42 +1226,87 @@ function ConfigScreen() {
         </Text>
       )}
       {message ? <Callout tone="warning">{message}</Callout> : null}
-      {connected && current ? (
-        // Connected: the connection folds away; the PAT belongs to the organization, so both
-        // change together, after the stored PAT is deleted.
-        <Collapsible
-          title={m.connectionSection}
-          description={`${current.organization} · ${m.patStoredLabel}`}
-          defaultOpen={false}
-        >
-          <Stack gap="xs">
-            {current.protection === 'unavailable' ? (
-              <Callout tone="warning" title={m.errors.secretsUnavailable.title}>
-                {m.errors.secretsUnavailable.body}
-              </Callout>
-            ) : null}
-            <Row justify="between" align="center">
-              <Stack gap="none">
-                <Text weight="medium">{current.organization}</Text>
+      {connected && current && edits ? (
+        // Connected: every section folds, stacked like the panel's groups. The PAT belongs to
+        // the organization, so both change together, after the stored PAT is deleted.
+        <Stack gap="sm">
+          <Stack gap="none">
+            <Collapsible
+              title={m.connectionSection}
+              description={`${current.organization} · ${m.patStoredLabel}`}
+              defaultOpen={false}
+            >
+              <Stack gap="xs">
+                {current.protection === 'unavailable' ? (
+                  <Callout tone="warning" title={m.errors.secretsUnavailable.title}>
+                    {m.errors.secretsUnavailable.body}
+                  </Callout>
+                ) : null}
+                <Row justify="between" align="center" gap="xs">
+                  <Text muted size="xs">
+                    {m.changeConnectionHelp}
+                  </Text>
+                  <IconButton
+                    icon="delete"
+                    label={m.forgetPat}
+                    variant="ghost"
+                    tone="danger"
+                    onPress={forgetPat}
+                    disabled={working}
+                  />
+                </Row>
+              </Stack>
+            </Collapsible>
+            <Collapsible
+              title={m.projectsSection}
+              description={edits.allProjects ? m.allProjects : m.selectedCount(edits.projects.length)}
+              defaultOpen={!edits.allProjects}
+            >
+              <Stack gap="xs">
+                <Switch
+                  label={m.allProjects}
+                  checked={edits.allProjects}
+                  onChange={(checked) => editDraft({ allProjects: checked })}
+                />
+                {edits.allProjects ? null : <ProjectPicker />}
+              </Stack>
+            </Collapsible>
+            <BoardSection />
+            <Collapsible title={m.displaySection} description={edits.stripAreaPrefix ? m.prefixRemoved : m.prefixKept}>
+              <Stack gap="xs">
+                <Switch
+                  label={m.stripPrefix}
+                  checked={edits.stripAreaPrefix}
+                  onChange={(checked) => editDraft({ stripAreaPrefix: checked })}
+                />
                 <Text muted size="xs">
-                  {m.patStoredLabel}
+                  {m.stripPrefixHelp}
                 </Text>
               </Stack>
-              <IconButton
-                icon="delete"
-                label={m.forgetPat}
-                variant="ghost"
-                tone="danger"
-                onPress={forgetPat}
-                disabled={working}
+            </Collapsible>
+            <Collapsible title={m.refreshSection} description={m.refreshOptions[edits.refreshMinutes]}>
+              <Select
+                label={m.refreshLabel}
+                labelHidden
+                value={String(edits.refreshMinutes)}
+                options={REFRESH_CHOICES.map((value) => ({
+                  value: String(value),
+                  label: m.refreshOptions[value]!
+                }))}
+                onChange={(value) => editDraft({ refreshMinutes: Number(value) })}
               />
-            </Row>
-            <Text muted size="xs">
-              {m.changeConnectionHelp}
-            </Text>
+            </Collapsible>
           </Stack>
-        </Collapsible>
-      ) : (
+          <Row justify="end" gap="xs">
+            <Button variant="ghost" onPress={back} disabled={working}>
+              {m.back}
+            </Button>
+            <Button onPress={saveDraft} disabled={working}>
+              {working ? m.saving : m.save}
+            </Button>
+          </Row>
+        </Stack>
+      ) : connected ? null : (
         <Stack gap="sm">
           <Heading level={2}>{m.connectionSection}</Heading>
           {current?.protection === 'unavailable' ? (
@@ -1289,53 +1343,6 @@ function ConfigScreen() {
           </Row>
         </Stack>
       )}
-      {connected && edits ? (
-        <Stack gap="sm">
-          <Collapsible
-            title={m.projectsSection}
-            description={edits.allProjects ? m.allProjects : m.selectedCount(edits.projects.length)}
-            defaultOpen={!edits.allProjects}
-          >
-            <Stack gap="xs">
-              <Switch
-                label={m.allProjects}
-                checked={edits.allProjects}
-                onChange={(checked) => editDraft({ allProjects: checked })}
-              />
-              {edits.allProjects ? null : <ProjectPicker />}
-            </Stack>
-          </Collapsible>
-          <BoardSection />
-          <Stack gap="xs">
-            <Heading level={2}>{m.displaySection}</Heading>
-            <Switch
-              label={m.stripPrefix}
-              checked={edits.stripAreaPrefix}
-              onChange={(checked) => editDraft({ stripAreaPrefix: checked })}
-            />
-            <Text muted size="xs">
-              {m.stripPrefixHelp}
-            </Text>
-            <Select
-              label={m.refreshLabel}
-              value={String(edits.refreshMinutes)}
-              options={REFRESH_CHOICES.map((value) => ({
-                value: String(value),
-                label: m.refreshOptions[value]!
-              }))}
-              onChange={(value) => editDraft({ refreshMinutes: Number(value) })}
-            />
-          </Stack>
-          <Row justify="end" gap="xs">
-            <Button variant="ghost" onPress={back} disabled={working}>
-              {m.back}
-            </Button>
-            <Button onPress={saveDraft} disabled={working}>
-              {working ? m.saving : m.save}
-            </Button>
-          </Row>
-        </Stack>
-      ) : null}
     </Stack>
   )
 }
@@ -1659,7 +1666,7 @@ export function selectWidth(options: readonly { label: string }[]): number {
   return Math.min(320, Math.max(120, Math.ceil(longest * 7.5) + 48))
 }
 
-/** An item that opens its actions when pressed: Open in browser, Move to, Close. */
+/** An item that opens its actions when pressed: Close, Open in browser, Start work, Move to. */
 function Entry({
   tab,
   item,
@@ -1683,10 +1690,15 @@ function Entry({
   const spec = move()
   const running = read(movingKey) === key
   const failed = read(moveError)
+  // Two rows: the item itself stays pressable (pressing it again folds the actions), and a row
+  // without onPress holds the controls, since a pressable row cannot contain them.
   return (
-    <ListItem icon={icon} title={title} description={description} current={current}>
+    <>
+      <ListItem icon={icon} title={title} description={description} current={current} onPress={() => toggleItem(key)} />
+      <ListItem>
       <Stack gap="xs">
         <Row align="center" gap="xs" wrap>
+          <IconButton icon="collapse" label={m.closeItem} variant="ghost" onPress={() => toggleItem(key)} />
           <IconButton icon="globe" label={m.openInBrowser} variant="outline" onPress={() => open(item)} />
           <Button
             variant="outline"
@@ -1711,12 +1723,12 @@ function Entry({
             />
           </Box>
           {running ? <Spinner label={m.moving} /> : null}
-          <IconButton icon="collapse" label={m.closeItem} variant="ghost" onPress={() => toggleItem(key)} />
         </Row>
         {failed && failed.key === key ? <ErrorBox error={failed.error} /> : null}
         {read(startKey) === key ? <StartForm tab={tab} item={item} /> : null}
       </Stack>
-    </ListItem>
+      </ListItem>
+    </>
   )
 }
 
@@ -1917,7 +1929,7 @@ function ColumnBody({ section }: { section: ColumnSection }) {
   }
   if (!section.column.isSplit) return <BoardList items={section.items} label={name} />
   return (
-    <Stack gap="xs">
+    <Stack gap="none">
       <Half title={m.doing} items={section.doing} label={name} />
       <Half title={m.done} items={section.done} label={name} />
     </Stack>

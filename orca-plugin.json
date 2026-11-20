@@ -4,7 +4,7 @@
   "publisher": "fabiopbarbieri",
   "name": "Azure Boards",
   "version": "0.1.0",
-  "description": "Lists the Azure Boards work items assigned to you, from Azure DevOps Services (dev.azure.com), and opens them in the browser.",
+  "description": "Your Azure Boards work items (Azure DevOps Services) in Orca: what is assigned to you and your team's board. Search, move items between states and columns, and start work on one with a coding agent.",
   "license": "MIT",
   "author": {
     "name": "fabiopbarbieri"

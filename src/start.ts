@@ -1,5 +1,5 @@
-// "Start work": the pure parts. Turns an Azure DevOps work item into the prompt and the worktree
-// name that are proposed to the person.
+// "Start work": the pure parts. Turns an Azure DevOps work item into the prompt and the workspace
+// (worktree) name that are proposed to the person.
 
 const ENTITIES: Record<string, string> = { nbsp: ' ', amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" }
 
@@ -42,7 +42,7 @@ export function workspaceNameFor(id: number, title: string): string {
   if (slug.length > SLUG_MAX) {
     const head = slug.slice(0, SLUG_MAX + 1)
     const boundary = head.lastIndexOf('-')
-    // A cut on a boundary when there is one (and keeps a word's worth); otherwise mid-word.
+    // Cut at the last hyphen within the limit; mid-word when there is none.
     slug = boundary > 0 ? head.slice(0, boundary) : slug.slice(0, SLUG_MAX)
     slug = slug.replace(/-+$/, '')
   }

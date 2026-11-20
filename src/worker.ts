@@ -1,5 +1,5 @@
 // The plugin's worker: every Azure DevOps call happens here, because the panel's frame has no
-// network. Orca transpiles this file when it loads it; a save restarts the worker.
+// network.
 // The PAT lives only in Orca's encrypted secrets (secrets:own). It is never logged, never posted
 // and never returned to the panel. It is stored with the organization that accepted it and only
 // ever sent there: after the organization changes, the panel asks for a PAT again.
@@ -100,7 +100,7 @@ function cleanProjects(value: unknown): Project[] {
   return out
 }
 
-/** A refusal the panel sees with `invalid_params` (any thrown error with a host code reaches it). */
+/** An error carrying the code `invalid_params`, for input the panel should not have sent. */
 function invalid(message: string): Error {
   return Object.assign(new Error(message), { code: 'invalid_params' })
 }
@@ -182,7 +182,7 @@ export default function activate(orca: OrcaWorkerApi): void {
     try {
       return (await orca.host.call('secrets.protection')).status
     } catch {
-      // Older hosts without the method: secrets.set will tell.
+      // If the status cannot be read, assume a keyring: secrets.set will tell.
       return 'os-keyring'
     }
   }
@@ -402,9 +402,8 @@ export default function activate(orca: OrcaWorkerApi): void {
   }
 
   /**
-   * The agent kinds to offer: from Orca's session history (newest first), then the open agents,
-   * then the usual ones (an agent turned on in Orca but never used shows no other way). The
-   * history is a nicety: when it cannot be read, the rest remains.
+   * The agent kinds to offer: from Orca's session history (in the order Orca returns it), then the
+   * open agents, then the usual ones. When the history cannot be read, the rest remains.
    */
   async function gatherAgentKinds(open: readonly OpenAgent[]): Promise<string[]> {
     let sessions: { agent: string }[] = []
@@ -489,7 +488,7 @@ export default function activate(orca: OrcaWorkerApi): void {
       input.locale
     )
     const lastProjectId = project ? ((await readStartProjects())[project] ?? '') : ''
-    // The worktree name drops the leading [area] like the list does; the prompt keeps the full title.
+    // The worktree name uses the title without the leading [area]; the prompt keeps the full title.
     const shortTitle = cleanTitle(title, text('System.AreaPath'))
     return {
       ok: true,
@@ -652,7 +651,7 @@ export default function activate(orca: OrcaWorkerApi): void {
     return changed()
   })
 
-  // Someone changed a setting in Orca's Settings: open panels reload.
+  // A setting changed (in Orca's Settings or by prefs.set/config.save): tell the open panels.
   orca.settings.onDidChange(() => {
     void changed()
   })
