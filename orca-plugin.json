@@ -1,0 +1,101 @@
+{
+  "manifestVersion": 2,
+  "id": "azure-boards",
+  "publisher": "fabiopbarbieri",
+  "name": "Azure Boards",
+  "version": "0.1.0",
+  "description": "Lists the Azure Boards work items assigned to you, from Azure DevOps Services (dev.azure.com), and opens them in the browser.",
+  "license": "MIT",
+  "author": {
+    "name": "fabiopbarbieri"
+  },
+  "repository": "https://github.com/fabiopbarbieri/azure-boards-orca-plugin",
+  "engines": {
+    "orca": ">=1.4.264"
+  },
+  "execution": "trusted-worker",
+  "pluginApi": 1,
+  "main": "src/worker.ts",
+  "capabilities": [
+    {
+      "kind": "settings:own"
+    },
+    {
+      "kind": "secrets:own"
+    },
+    {
+      "kind": "storage:own"
+    }
+  ],
+  "contributes": {
+    "panels": [
+      {
+        "id": "azure-boards",
+        "title": "Azure Boards",
+        "icon": "layers",
+        "entry": "src/panel.tsx",
+        "ui": "components"
+      }
+    ],
+    "settings": [
+      {
+        "key": "organization",
+        "title": "Organization",
+        "type": "string",
+        "default": "",
+        "placeholder": "contoso",
+        "description": "The name in https://dev.azure.com/<organization>. You can paste the URL instead."
+      },
+      {
+        "key": "groupBy",
+        "title": "Group work items by",
+        "type": "string",
+        "default": "state",
+        "enum": [
+          "none",
+          "state",
+          "boardColumn"
+        ],
+        "enumLabels": [
+          "No grouping",
+          "State",
+          "Board column"
+        ],
+        "description": "How the panel groups the list. You can also change it from the panel."
+      },
+      {
+        "key": "stripAreaPrefix",
+        "title": "Remove the area prefix from titles",
+        "type": "boolean",
+        "default": true,
+        "description": "Hides a leading [Team or area name] in titles when it matches the item's area path."
+      },
+      {
+        "key": "refreshMinutes",
+        "title": "Refresh every",
+        "type": "integer",
+        "default": 5,
+        "enum": [
+          0,
+          5,
+          15,
+          30
+        ],
+        "enumLabels": [
+          "Off",
+          "5 minutes",
+          "15 minutes",
+          "30 minutes"
+        ],
+        "description": "Reloads the list while the panel is visible. Off reloads only when you press Refresh."
+      },
+      {
+        "key": "hiddenStates",
+        "title": "Hidden states",
+        "type": "string",
+        "default": "Closed, Done, Removed",
+        "description": "Comma-separated work item states left out of the list."
+      }
+    ]
+  }
+}
