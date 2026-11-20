@@ -35,6 +35,12 @@ export type WorkItem = {
 
 export type GroupBy = 'none' | 'state' | 'boardColumn'
 
+/**
+ * Which lists leave out completed items (state category Completed): none, only the children
+ * lists, or every list (Assigned to me, Board and children).
+ */
+export type HideClosed = 'off' | 'children' | 'all'
+
 /** The team board the Board view shows, chosen in the config screen. */
 export type BoardRef = {
   projectId: string
@@ -93,6 +99,13 @@ export type MoveTarget =
   | { kind: 'column'; columnId: string; done: boolean }
 
 export type MoveResult = { ok: true } | { ok: false; error: ListError }
+
+/**
+ * The child work items (hierarchy links) of an item, not removed, in the order the panel shows
+ * them: by state category (Proposed, In progress, Resolved, Completed, unknown last), then by id.
+ * Each child carries its own counters, so it can be expanded in turn.
+ */
+export type ChildrenResult = { ok: true; items: BoardItem[] } | { ok: false; error: ListError }
 
 /** An agent already running in an Orca terminal, that "Start work" can send the prompt to. */
 export type OpenAgent = {
@@ -207,6 +220,8 @@ export type ConfigView = {
   groupBy: GroupBy
   /** Remove a leading `[<area path segment>]` from titles. */
   stripAreaPrefix: boolean
+  /** Completed items left out of the lists; applied by the panel, so changing it needs no reload. */
+  hideClosed: HideClosed
   /** States left out of the list (Orca's Settings only); here so the panel knows when to reload. */
   hiddenStates: string[]
   /** Minutes between automatic reloads while the panel is visible; 0 is off. */
@@ -218,7 +233,7 @@ export type ConfigView = {
 export type Prefs = Partial<
   Pick<
     ConfigView,
-    'allProjects' | 'projects' | 'groupBy' | 'stripAreaPrefix' | 'refreshMinutes' | 'board'
+    'allProjects' | 'projects' | 'groupBy' | 'stripAreaPrefix' | 'hideClosed' | 'refreshMinutes' | 'board'
   >
 >
 
@@ -250,6 +265,8 @@ declare module 'orca' {
      * state that column maps the item's type to). Needs Work Items (Read & write).
      */
     'item.move': { input: { id: number; target: MoveTarget }; output: MoveResult }
+    /** The children of a work item (tasks of a story, stories of a feature, and so on). */
+    'item.children': { input: { id: number }; output: ChildrenResult }
     /**
      * What "Start work" offers for an item: the open agents, the Orca Git projects, and a prompt
      * and worktree name to propose, in the panel's language (`locale`, such as `pt-BR`). Reads the

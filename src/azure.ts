@@ -440,7 +440,19 @@ export type Links = { childrenTotal: number; childrenDone: number; pullRequests:
 const CHILD_LINK = 'System.LinkTypes.Hierarchy-Forward'
 const PR_NAME = 'GitHub Pull Request'
 
-function chunks<T>(list: readonly T[], size: number): T[][] {
+/** The ids of the child work items in a relations list, without repeats, in the list's order. */
+export function childIdsOf(relations: unknown): number[] {
+  const kids: number[] = []
+  if (!Array.isArray(relations)) return kids
+  for (const rel of relations as { rel?: unknown; url?: unknown }[]) {
+    if (rel?.rel !== CHILD_LINK || typeof rel.url !== 'string') continue
+    const child = Number(rel.url.split('/').pop())
+    if (Number.isInteger(child) && !kids.includes(child)) kids.push(child)
+  }
+  return kids
+}
+
+export function chunks<T>(list: readonly T[], size: number): T[][] {
   const out: T[][] = []
   for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size))
   return out
@@ -475,14 +487,11 @@ export async function fetchLinks(
     const value = (answer.json as { value?: ({ id?: unknown; relations?: unknown } | null)[] })?.value ?? []
     for (const item of value) {
       if (!item || typeof item.id !== 'number' || !Array.isArray(item.relations)) continue
-      const kids: number[] = []
+      const kids = childIdsOf(item.relations)
       const urls = new Set<string>()
       for (const rel of item.relations as { rel?: unknown; url?: unknown; attributes?: { name?: unknown } }[]) {
         if (typeof rel?.url !== 'string') continue
-        if (rel.rel === CHILD_LINK) {
-          const child = Number(rel.url.split('/').pop())
-          if (Number.isInteger(child) && !kids.includes(child)) kids.push(child)
-        } else if (rel.rel === 'ArtifactLink' && rel.attributes?.name === PR_NAME) urls.add(rel.url)
+        if (rel.rel === 'ArtifactLink' && rel.attributes?.name === PR_NAME) urls.add(rel.url)
       }
       children.set(item.id, kids)
       prs.set(item.id, urls.size)

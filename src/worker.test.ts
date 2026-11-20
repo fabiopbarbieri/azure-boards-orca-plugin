@@ -3,6 +3,7 @@ import { afterEach, assert, hostError, mockHost, mountWorker, test } from 'orca/
 import {
   batch,
   boardAnswer,
+  child,
   connectionData,
   FAKE_PAT,
   fakeFetch,
@@ -79,6 +80,7 @@ test('reports the config without the PAT', async () => {
     projects: [{ id: 'g1', name: 'Web' }],
     groupBy: 'boardColumn',
     stripAreaPrefix: false,
+    hideClosed: 'off',
     hiddenStates: ['Closed', 'Done'],
     refreshMinutes: 5,
     board: null
@@ -99,6 +101,7 @@ test('config.get defaults: every project, grouped by state, area prefix stripped
     projects: [],
     groupBy: 'state',
     stripAreaPrefix: true,
+    hideClosed: 'off',
     hiddenStates: [],
     refreshMinutes: 5,
     board: null
@@ -108,13 +111,13 @@ test('config.get defaults: every project, grouped by state, area prefix stripped
 
 test('an invalid stored groupBy or filter reads as the defaults', async () => {
   const host = mockHost({
-    settings: { organization: 'contoso', groupBy: 'weird' },
+    settings: { organization: 'contoso', groupBy: 'weird', hideClosed: 'weird' },
     storage: { projects: 'junk' },
     results: keyring
   })
   const worker = await mountWorker(main, { host })
   const view = await worker.request('config.get')
-  assert.deepEqual([view.groupBy, view.allProjects, view.projects], ['state', true, []])
+  assert.deepEqual([view.groupBy, view.allProjects, view.projects, view.hideClosed], ['state', true, [], 'off'])
   await worker.deactivate()
 })
 
@@ -173,6 +176,7 @@ test('saves the organization and PAT only after Azure DevOps accepts them', asyn
     projects: [],
     groupBy: 'state',
     stripAreaPrefix: true,
+    hideClosed: 'off',
     hiddenStates: [],
     refreshMinutes: 5,
     board: null
@@ -351,6 +355,7 @@ test('prefs.set stores the projects and the preferences, and posts the new view'
     ],
     groupBy: 'boardColumn',
     stripAreaPrefix: false,
+    hideClosed: 'off',
     hiddenStates: [],
     refreshMinutes: 5,
     board: null
@@ -370,6 +375,9 @@ test('prefs.set stores the projects and the preferences, and posts the new view'
   // A partial update leaves the rest alone.
   const partial = await worker.request('prefs.set', { groupBy: 'none' })
   assert.deepEqual([partial.groupBy, partial.allProjects, partial.stripAreaPrefix], ['none', false, false])
+  const hiding = await worker.request('prefs.set', { hideClosed: 'children' })
+  assert.equal(hiding.hideClosed, 'children')
+  assert.equal(host.data().settings.hideClosed, 'children')
   assertNoLeak(worker, view)
   assert.deepEqual(worker.refusals, [])
   await worker.deactivate()
@@ -381,6 +389,7 @@ test('prefs.set refuses invalid values with invalid_params and writes nothing', 
   for (const bad of [
     { groupBy: 'weird', allProjects: false },
     { stripAreaPrefix: 'yes' },
+    { hideClosed: 'sometimes' },
     { allProjects: 1 },
     { projects: 'Web' }
   ]) {
@@ -1156,5 +1165,55 @@ test('start.run: a worktree that was created is a success even if remembering th
   assert.deepEqual(result, { ok: true })
   assert.equal(worker.host.callsOf('workspace.create').length, 1)
   assert.ok(worker.logs.some((l) => l.includes('could not remember')))
+  await worker.deactivate()
+})
+
+const kids = (...ids: number[]) => relationsAnswer([1234, ids.map(child)])
+
+test('item.children answers the children in order, with the PAT kept out of logs and answers', async () => {
+  const fetch = useRoutes(
+    [(c) => (c.body as { $expand?: string } | undefined)?.$expand === 'relations' && (c.body as { ids: number[] }).ids[0] === 1234, kids(8, 7)],
+    [isRelationsBatch, relationsAnswer()],
+    [isFieldsBatch, batch({ id: 8, title: 'Second', state: 'Active' }, { id: 7, title: 'First', state: 'Active' })],
+    ['/_apis/connectionData', connectionData('me-id')],
+    typesRoute
+  )
+  const worker = await mountWorker(main, { host: mockHost({ settings: { organization: 'contoso' }, secrets: { pat: STORED } }) })
+  const result = await worker.request('item.children', { id: 1234 })
+  assert.ok(result.ok)
+  assert.deepEqual(result.items.map((i) => i.id), [7, 8])
+  assert.ok(fetch.calls.every((c) => c.headers.Authorization?.startsWith('Basic ')))
+  assertNoLeak(worker, result)
+  await worker.deactivate()
+})
+
+test('item.children without credentials asks nothing', async () => {
+  const fetch = useRoutes()
+  const bare = await mountWorker(main, { host: mockHost({ settings: { organization: 'contoso' } }) })
+  assert.deepEqual(await bare.request('item.children', { id: 1234 }), { ok: false, error: { kind: 'notConfigured' } })
+  await bare.deactivate()
+  assert.equal(fetch.calls.length, 0)
+})
+
+test('item.children refuses invalid input with invalid_params and asks nothing', async () => {
+  const fetch = useRoutes()
+  const worker = await mountWorker(main, { host: mockHost({ settings: { organization: 'contoso' }, secrets: { pat: STORED } }) })
+  for (const input of [{ id: 0 }, { id: -3 }, { id: 1.5 }, { id: '7' }, {}, null]) {
+    await assert.rejects(
+      () => worker.request('item.children', input as never),
+      (error: unknown) => (error as { code?: string }).code === 'invalid_params'
+    )
+  }
+  assert.equal(fetch.calls.length, 0)
+  await worker.deactivate()
+})
+
+test('item.children maps a failure to ListError and logs it without the PAT', async () => {
+  useRoutes([isRelationsBatch, json({ message: `denied ${FAKE_PAT}` }, 403)])
+  const worker = await mountWorker(main, { host: mockHost({ settings: { organization: 'contoso' }, secrets: { pat: STORED } }) })
+  const result = await worker.request('item.children', { id: 1234 })
+  assert.deepEqual(result, { ok: false, error: { kind: 'scope', detail: 'denied ***' } })
+  assert.ok(worker.logs.some((l) => l.includes('children failed: scope')))
+  assertNoLeak(worker, result)
   await worker.deactivate()
 })

@@ -51,6 +51,7 @@ const configured: ConfigView = {
   projects: [],
   groupBy: 'none',
   stripAreaPrefix: true,
+  hideClosed: 'off',
   hiddenStates: ['Closed', 'Done', 'Removed'],
   refreshMinutes: 5,
   board: null
@@ -342,7 +343,7 @@ test('projects: ticks stay in the draft until Save, which saves them all and sho
 
   await view.press({ text: 'Save' })
   assert.deepEqual(w.state.prefs, [
-    { allProjects: false, projects: [reports], stripAreaPrefix: true, refreshMinutes: 5, board: null }
+    { allProjects: false, projects: [reports], stripAreaPrefix: true, hideClosed: 'off', refreshMinutes: 5, board: null }
   ])
   assert.ok(view.find({ label: '#1 One' }))
   assert.equal(w.state.listCalls, 2)
@@ -456,12 +457,13 @@ test('display: the prefix switch and the refresh interval are saved together', a
   assert.equal(view.valueOf({ label: 'Refresh every' }), '5')
   await view.toggle({ label: 'Remove the area prefix from titles' })
   await view.select({ label: 'Refresh every' }, '15')
+  await view.select({ label: 'Hide completed items' }, 'children')
   assert.deepEqual(w.state.prefs, [])
 
   assert.equal(w.state.listCalls, 1)
   await view.press({ text: 'Save' })
   assert.deepEqual(w.state.prefs, [
-    { allProjects: true, projects: [], stripAreaPrefix: false, refreshMinutes: 15, board: null }
+    { allProjects: true, projects: [], stripAreaPrefix: false, hideClosed: 'children', refreshMinutes: 15, board: null }
   ])
   assert.equal(w.state.listCalls, 2)
   assert.ok(view.find({ label: '#1 One' }))
@@ -773,6 +775,7 @@ test('config: the Board section picks project, team and board; Save sends it', a
       allProjects: true,
       projects: [],
       stripAreaPrefix: true,
+      hideClosed: 'off',
       refreshMinutes: 5,
       board: {
         projectId: 'p-rep',
@@ -921,9 +924,9 @@ test('counters: tasks and pull requests follow the state and precede the project
     ).requests
   })
   const view = await mount(panel, { host })
-  assert.equal(view.find({ label: '#1 Both' })?.props.description, 'Bug · Active · Tasks 1/4 · 29 PRs · Web')
+  assert.equal(view.find({ label: '#1 Both' })?.props.description, 'Bug · Active · 📋 1/4 · 29 PRs · Web')
   assert.equal(view.find({ label: '#2 One PR' })?.props.description, 'Bug · Active · 1 PR · Reports')
-  assert.equal(view.find({ label: '#3 Done all' })?.props.description, 'Bug · Active · Tasks 2/2 · Web')
+  assert.equal(view.find({ label: '#3 Done all' })?.props.description, 'Bug · Active · 📋 2/2 · Web')
   assert.equal(view.find({ label: '#4 None' })?.props.description, 'Bug · Active · Web')
   clean(view, host)
   await view.unmount()
@@ -935,12 +938,12 @@ test('counters on the board follow the assignee, and speak Portuguese', async ()
   })
   const host = mockHost({ requests: worker(withBoard, listed(), { 'board.get': result }).requests })
   const view = await mount(panel, { host, persisted: { plugin: { activeTab: 'board' } } })
-  assert.equal(view.find({ label: '#1 Card 1' })?.props.description, 'Bug · Ana · Tasks 0/3 · 2 PRs')
+  assert.equal(view.find({ label: '#1 Card 1' })?.props.description, 'Bug · Ana · 📋 0/3 · 2 PRs')
   assert.equal(view.find({ label: '#2 Card 2' })?.props.description, 'Bug')
   await view.unmount()
 
   const pt = await mount(panel, { host, locale: 'pt-BR', persisted: { plugin: { activeTab: 'board' } } })
-  assert.equal(pt.find({ label: '#1 Card 1' })?.props.description, 'Bug · Ana · Tarefas 0/3 · 2 PRs')
+  assert.equal(pt.find({ label: '#1 Card 1' })?.props.description, 'Bug · Ana · 📋 0/3 · 2 PRs')
   clean(pt, host)
   await pt.unmount()
 })
@@ -1430,6 +1433,259 @@ test('projects: two projects named alike stay apart', async () => {
   await view.toggle({ type: 'Checkbox', label: 'Operacoes' })
   await view.press({ text: 'Save' })
   assert.deepEqual((w.state.prefs[0] as Prefs).projects, [accented, plain])
+  clean(view, host)
+  await view.unmount()
+})
+
+// ---------------------------------------------------------------------------------------------
+// Children of an item
+
+const child = (id: number, title: string, over: Partial<BoardItem> = {}): BoardItem => ({
+  ...item(id, title, { type: 'Task', typeIcon: 'icon_clipboard', state: 'New', stateCategory: 'Proposed' }),
+  assignedTo: 'Ana Souza',
+  mine: false,
+  ...over
+})
+const kids = (...items: BoardItem[]) => ({ ok: true as const, items })
+
+/** A worker whose `item.children` answers from `byParent` and records the asked ids. */
+function childrenWorker(byParent: Record<number, unknown>, extra: Record<string, unknown> = {}) {
+  const asked: number[] = []
+  const w = worker(configured, listed(item(1234, 'Parent story', { childrenTotal: 3, childrenDone: 1 }), item(7, 'Lone')), {
+    'item.children': (input: { id: number }) => (asked.push(input.id), byParent[input.id]),
+    ...extra
+  })
+  return { w, asked }
+}
+
+test('children: the toggle shows the list loaded on demand, with the counter as its label', async () => {
+  const { w, asked } = childrenWorker({
+    1234: kids(child(2001, 'Write the tests'), child(2002, 'Review the code', { assignedTo: '', childrenTotal: 2, childrenDone: 0 }))
+  })
+  const host = mockHost({ requests: w.requests })
+  const view = await mount(panel, { host })
+  await view.press({ label: '#1234 Parent story' })
+  assert.deepEqual(asked, [])
+  assert.equal(view.find({ label: '#2001 Write the tests' }), null)
+  await view.press({ type: 'Button', text: '📋 1/3' })
+  assert.deepEqual(asked, [1234])
+  assert.equal(view.find({ label: '#2001 Write the tests' })?.props.description, 'Task · New · Ana Souza')
+  assert.equal(view.find({ label: '#2002 Review the code' })?.props.description, 'Task · New · 📋 0/2')
+  // Pressing it again hides the list.
+  await view.press({ type: 'Button', text: '📋 1/3' })
+  assert.equal(view.find({ label: '#2001 Write the tests' }), null)
+  clean(view, host)
+  await view.unmount()
+})
+
+test('children: no toggle when the item has no children', async () => {
+  const { w } = childrenWorker({})
+  const host = mockHost({ requests: w.requests })
+  const view = await mount(panel, { host })
+  await view.press({ label: '#7 Lone' })
+  assert.ok(view.find({ label: 'Open in browser' }))
+  assert.equal(view.findAll({ type: 'Button' }).filter((b) => String(b.props.children ?? '').startsWith('📋')).length, 0)
+  clean(view, host)
+  await view.unmount()
+})
+
+test('children: a spinner while loading, an empty note for no items', async () => {
+  let release: (value: unknown) => void = () => {}
+  const gate = new Promise((resolve) => (release = resolve))
+  const { w } = childrenWorker({}, { 'item.children': () => gate })
+  const host = mockHost({ requests: w.requests })
+  const view = await mount(panel, { host })
+  await view.press({ label: '#1234 Parent story' })
+  const pressing = view.press({ type: 'Button', text: '📋 1/3' })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.ok(view.find({ type: 'Spinner', label: 'Loading child items' }))
+  release(kids())
+  await pressing
+  await view.settled()
+  assert.equal(view.find({ type: 'Spinner', label: 'Loading child items' }), null)
+  assert.ok(view.find({ text: 'No child items.' }))
+  clean(view, host)
+  await view.unmount()
+})
+
+test('children: a failure shows the error and pressing the toggle twice retries', async () => {
+  let calls = 0
+  const { w } = childrenWorker(
+    {},
+    {
+      'item.children': () => (++calls === 1 ? { ok: false, error: { kind: 'server', detail: 'HTTP 500' } } : kids(child(2001, 'Write the tests')))
+    }
+  )
+  const host = mockHost({ requests: w.requests })
+  const view = await mount(panel, { host })
+  await view.press({ label: '#1234 Parent story' })
+  await view.press({ type: 'Button', text: '📋 1/3' })
+  assert.ok(view.find({ text: 'HTTP 500' }))
+  await view.press({ type: 'Button', text: '📋 1/3' })
+  await view.press({ type: 'Button', text: '📋 1/3' })
+  assert.equal(calls, 2)
+  assert.equal(view.find({ text: 'HTTP 500' }), null)
+  assert.ok(view.find({ label: '#2001 Write the tests' }))
+  clean(view, host)
+  await view.unmount()
+})
+
+test('children: a child expands without folding its parent, recursively; pressing it folds only it', async () => {
+  const { w, asked } = childrenWorker({
+    1234: kids(child(2001, 'Write the tests', { childrenTotal: 1, childrenDone: 0 })),
+    2001: kids(child(3001, 'Add the fixtures'))
+  })
+  const host = mockHost({ requests: w.requests })
+  const view = await mount(panel, { host })
+  await view.press({ label: '#1234 Parent story' })
+  await view.press({ type: 'Button', text: '📋 1/3' })
+  await view.press({ label: '#2001 Write the tests' })
+  // The parent's controls and the child's are both on screen.
+  assert.equal(view.findAll({ label: 'Open in browser' }).length, 2)
+  await view.press({ type: 'Button', text: '📋 0/1' })
+  assert.deepEqual(asked, [1234, 2001])
+  assert.ok(view.find({ label: '#3001 Add the fixtures' }))
+  assert.equal(view.findAll({ label: 'Open in browser' }).length, 2)
+  // Pressing the child folds it and its descendants; the parent stays open.
+  await view.press({ label: '#2001 Write the tests' })
+  assert.equal(view.find({ label: '#3001 Add the fixtures' }), null)
+  assert.equal(view.findAll({ label: 'Open in browser' }).length, 1)
+  assert.ok(view.find({ label: '#2001 Write the tests' }))
+  // Pressing the parent folds everything.
+  await view.press({ label: '#1234 Parent story' })
+  assert.equal(view.find({ label: '#2001 Write the tests' }), null)
+  clean(view, host)
+  await view.unmount()
+})
+
+test('children: moving a child refetches its parent list and reloads the tab', async () => {
+  const moves: unknown[] = []
+  const { w, asked } = childrenWorker(
+    { 1234: kids(child(2001, 'Write the tests')) },
+    { 'item.move': (input: unknown) => (moves.push(input), { ok: true }) }
+  )
+  const host = mockHost({ requests: w.requests })
+  const view = await mount(panel, { host })
+  await view.press({ label: '#1234 Parent story' })
+  await view.press({ type: 'Button', text: '📋 1/3' })
+  await view.press({ label: '#2001 Write the tests' })
+  const before = asked.length
+  // The child's Select is the last one, below its parent's.
+  const selects = view.findAll({ type: 'Select', label: 'Move to' })
+  assert.equal(selects.length, 2)
+  await view.select(selects[1]!, 'Closed')
+  assert.deepEqual(moves, [{ id: 2001, target: { kind: 'state', state: 'Closed' } }])
+  await view.settled()
+  assert.ok(asked.length > before)
+  assert.equal(w.state.listCalls, 2)
+  // The moved child folds; its parent and the list stay.
+  assert.ok(view.find({ label: '#2001 Write the tests' }))
+  assert.equal(view.findAll({ label: 'Open in browser' }).length, 1)
+  clean(view, host)
+  await view.unmount()
+})
+
+test('children: a refresh asks again for the open lists, and a closed list is not asked for', async () => {
+  const { w, asked } = childrenWorker({ 1234: kids(child(2001, 'Write the tests')) })
+  const host = mockHost({ requests: w.requests })
+  const view = await mount(panel, { host })
+  await view.press({ label: '#1234 Parent story' })
+  await view.press({ type: 'Button', text: '📋 1/3' })
+  await view.press({ label: 'Refresh' })
+  await view.settled()
+  assert.deepEqual(asked, [1234, 1234])
+  assert.ok(view.find({ label: '#2001 Write the tests' }))
+  await view.press({ type: 'Button', text: '📋 1/3' })
+  await view.press({ label: 'Refresh' })
+  await view.settled()
+  assert.deepEqual(asked, [1234, 1234])
+  clean(view, host)
+  await view.unmount()
+})
+
+test('children: on the Board tab the children are moved by state, and the labels speak Portuguese', async () => {
+  const asked: number[] = []
+  const result = boardResult({ items: [bItem(1, 'New', { childrenTotal: 2, childrenDone: 1 })] })
+  const w = worker(withBoard, listed(), {
+    'board.get': result,
+    'item.children': (input: { id: number }) => (asked.push(input.id), kids(child(2001, 'Escrever os testes')))
+  })
+  const host = mockHost({ requests: w.requests })
+  const view = await mount(panel, { host, locale: 'pt-BR', persisted: { plugin: { activeTab: 'board' } } })
+  await view.press({ label: '#1 Card 1' })
+  await view.press({ type: 'Button', text: '📋 1/2' })
+  assert.deepEqual(asked, [1])
+  await view.press({ label: '#2001 Escrever os testes' })
+  const select = view.findAll({ type: 'Select', label: 'Mover para' }).at(-1)
+  assert.deepEqual((select?.props.options as { value: string }[]).map((o) => o.value), ['New', 'Active', 'Closed'])
+  clean(view, host)
+  await view.unmount()
+})
+
+// ---------------------------------------------------------------------------------------------
+// Hide completed items
+
+function hidingWorker(hideClosed: ConfigView['hideClosed']) {
+  return worker(
+    { ...configured, hideClosed },
+    listed(item(1234, 'Parent story', { childrenTotal: 3, childrenDone: 2 }), item(8, 'Shipped', { state: 'Closed', stateCategory: 'Completed' })),
+    {
+      'item.children': () =>
+        kids(
+          child(2001, 'Write the tests'),
+          child(2002, 'Review the code', { state: 'Closed', stateCategory: 'Completed' }),
+          child(2003, 'Fix the build', { state: 'Done', stateCategory: 'Completed' })
+        )
+    }
+  )
+}
+
+test('hide completed: off shows every item and child', async () => {
+  const host = mockHost({ requests: hidingWorker('off').requests })
+  const view = await mount(panel, { host })
+  assert.ok(view.find({ label: '#8 Shipped' }))
+  await view.press({ label: '#1234 Parent story' })
+  await view.press({ type: 'Button', text: '📋 2/3' })
+  assert.ok(view.find({ label: '#2002 Review the code' }))
+  assert.equal(view.find({ text: '2 completed items hidden.' }), null)
+  clean(view, host)
+  await view.unmount()
+})
+
+test('hide completed: in child lists only, the list keeps its completed items and the children say how many are hidden', async () => {
+  const host = mockHost({ requests: hidingWorker('children').requests })
+  const view = await mount(panel, { host })
+  assert.ok(view.find({ label: '#8 Shipped' }))
+  await view.press({ label: '#1234 Parent story' })
+  await view.press({ type: 'Button', text: '📋 2/3' })
+  assert.ok(view.find({ label: '#2001 Write the tests' }))
+  assert.equal(view.find({ label: '#2002 Review the code' }), null)
+  assert.equal(view.find({ label: '#2003 Fix the build' }), null)
+  assert.ok(view.find({ text: '2 completed items hidden.' }))
+  clean(view, host)
+  await view.unmount()
+})
+
+test('hide completed: everywhere also leaves completed items out of the list', async () => {
+  const host = mockHost({ requests: hidingWorker('all').requests })
+  const view = await mount(panel, { host })
+  assert.equal(view.find({ label: '#8 Shipped' }), null)
+  await view.press({ label: '#1234 Parent story' })
+  await view.press({ type: 'Button', text: '📋 2/3' })
+  assert.equal(view.find({ label: '#2002 Review the code' }), null)
+  assert.ok(view.find({ text: '2 completed items hidden.' }))
+  clean(view, host)
+  await view.unmount()
+})
+
+test('hide completed: a change from the worker applies without a reload', async () => {
+  const w = hidingWorker('off')
+  const host = mockHost({ requests: w.requests })
+  const view = await mount(panel, { host })
+  const calls = w.state.listCalls
+  await view.post('config.changed', { ...configured, hideClosed: 'all' })
+  assert.equal(view.find({ label: '#8 Shipped' }), null)
+  assert.equal(w.state.listCalls, calls)
   clean(view, host)
   await view.unmount()
 })

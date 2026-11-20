@@ -12,6 +12,7 @@ const configured: ConfigView = {
   projects: [],
   groupBy: 'none',
   stripAreaPrefix: true,
+  hideClosed: 'off',
   hiddenStates: ['Closed', 'Done', 'Removed'],
   refreshMinutes: 5,
   board: null

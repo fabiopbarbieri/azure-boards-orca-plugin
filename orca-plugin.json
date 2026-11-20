@@ -122,6 +122,15 @@
         "description": "Hides a leading [Team or area name] in titles when it matches the item's area path."
       },
       {
+        "key": "hideClosed",
+        "title": "Hide completed items",
+        "type": "string",
+        "default": "off",
+        "enum": ["off", "children", "all"],
+        "enumLabels": ["Off", "In child lists only", "Everywhere"],
+        "description": "Leaves out items in a completed state, such as Closed or Done: only from an item's child list, or from every list."
+      },
+      {
         "key": "refreshMinutes",
         "title": "Refresh every",
         "type": "integer",

@@ -29,7 +29,7 @@ Azure DevOps Services (`https://dev.azure.com/<organization>`) only. It needs no
 |---|---|
 | **Assigned to me** | Your open work items, newest change first, grouped by state, by board column or not at all. |
 | **Board** | Your team's board for the current iteration: real columns and order, Doing/Done halves, WIP limits (`In Progress · 3/7`), your items highlighted, and a switch between the Epics, Features and Stories boards. |
-| **At a glance** | The type's icon, child tasks done (`Tasks 1/4`) and linked GitHub pull requests (`2 PRs`) on every item. |
+| **At a glance** | The type's icon, child tasks done (`📋 1/4`) and linked GitHub pull requests (`2 PRs`) on every item. |
 | **Search** | Filter either tab by number (`123`, `#123`) or by part of the title, ignoring case and accents. |
 | **Move to** | Change an item's state, or its board column and Doing/Done half, without leaving Orca. |
 | **Start work** | Send an item to a coding agent already open in Orca, or to a new worktree with a new agent. |
@@ -81,6 +81,7 @@ Click an item to open its actions; click it again, or the close button, to fold 
 | 🌐 **Open in browser** | Opens the item in Azure DevOps in your system browser. The first time, Orca asks before it opens `dev.azure.com`. |
 | **Start work** | Sends the item to a coding agent. See [Start work](#start-work). |
 | **Move to** | **Assigned to me**: another state of the item's type. **Board**: another column, or the Doing or Done half of a split column; the state follows the column, as on the board. The tab reloads afterwards. If Azure DevOps refuses (a state transition or a rule of your process), its message shows in the item. |
+| 📋 **Children** | Shown on an item with child work items (`📋 done/total`): lists them under the item, loaded when you open it. Each child has the same actions and, if it has children of its own, opens them too (Epic → Feature → Story → Task). |
 
 ### Search, folding and refresh
 
@@ -114,7 +115,7 @@ Open the panel's **Settings** (gear icon). Each section folds and shows its curr
 | **Connection** | The organization and the PAT. To change either, delete the stored PAT with the trash button and connect again. The PAT is not part of Save. |
 | **Projects** | **All projects** (including ones you gain access to later), or only the ones you tick. Only projects you can access are listed. |
 | **Board** | The project and team whose board the Board tab shows. |
-| **Display** | Remove the area prefix from titles. |
+| **Display** | Remove the area prefix from titles; hide completed items (off, in child lists only, or everywhere). |
 | **Refresh** | How often the visible tab reloads: off, 5, 15 or 30 minutes. |
 
 ### In Orca's Settings
@@ -126,6 +127,7 @@ Under **Settings → Plugins → Azure Boards** (labels in English: Orca does no
 | Organization | empty | The name in `https://dev.azure.com/<organization>`. |
 | Group work items by | State | No grouping, State or Board column. Same as the panel's menu. |
 | Remove the area prefix from titles | on | Hides a leading `[...]` that matches a segment of the item's area path. In `[Web Team \| 1234 \| Service]` only the area goes: `[1234 \| Service]`. `[BUG]` stays. |
+| Hide completed items | Off | **In child lists only** leaves completed children (state category Completed, such as Closed or Done) out of an item's child list and says how many are hidden. **Everywhere** also leaves them out of **Assigned to me** and the **Board**. |
 | Refresh every | 5 minutes | Off, 5, 15 or 30 minutes, while the panel is visible. |
 | Hidden states | `Closed, Done, Removed` | Comma-separated states left out of **Assigned to me**. Adjust it to your process. |
 
@@ -231,7 +233,7 @@ Só Azure DevOps Services (`https://dev.azure.com/<organização>`). Não precis
 |---|---|
 | **Atribuídos a mim** | Seus work items abertos, do mais recente para o mais antigo, agrupados por estado, por coluna do board ou sem agrupamento. |
 | **Board** | O board do seu time na iteração atual: colunas e ordem reais, metades Em andamento/Concluído, limites de WIP (`In Progress · 3/7`), seus itens destacados e troca entre os boards Epics, Features e Stories. |
-| **Num relance** | Ícone do tipo, tarefas filhas concluídas (`Tarefas 1/4`) e PRs do GitHub vinculados (`2 PRs`) em cada item. |
+| **Num relance** | Ícone do tipo, tarefas filhas concluídas (`📋 1/4`) e PRs do GitHub vinculados (`2 PRs`) em cada item. |
 | **Busca** | Filtra qualquer aba pelo número (`123`, `#123`) ou por um trecho do título, sem diferenciar maiúsculas nem acentos. |
 | **Mover para** | Muda o estado do item, ou a coluna do board e a metade Em andamento/Concluído, sem sair do Orca. |
 | **Iniciar trabalho** | Manda o item para um agente já aberto no Orca, ou para um worktree novo com um agente novo. |
@@ -275,6 +277,7 @@ Só Azure DevOps Services (`https://dev.azure.com/<organização>`). Não precis
 | 🌐 **Abrir no navegador** | Abre o item no Azure DevOps no navegador do sistema. Na primeira vez, o Orca pede confirmação para abrir o `dev.azure.com`. |
 | **Iniciar trabalho** | Manda o item para um agente de código. Veja [Iniciar trabalho](#iniciar-trabalho). |
 | **Mover para** | **Atribuídos a mim**: outro estado do tipo do item. **Board**: outra coluna, ou a metade Em andamento ou Concluído de uma coluna dividida; o estado acompanha a coluna, como no board. A aba recarrega em seguida. Se o Azure DevOps recusar (transição de estado ou regra do processo), a mensagem dele aparece no item. |
+| 📋 **Filhos** | Aparece num item com work items filhos (`📋 concluídos/total`): lista os filhos abaixo do item, carregados quando você abre. Cada filho tem as mesmas ações e, se tiver filhos, abre os dele também (Epic → Feature → Story → Task). |
 
 **Busca, recolher e atualizar.** A **lupa** abre a busca; grupos e colunas com resultado abrem durante a busca, e fechar a lupa limpa a busca, sem consultar o Azure de novo. Grupos e colunas recolhem, e o painel lembra quais você recolheu. **Atualizar** recarrega a aba visível na hora; ela também recarrega sozinha a cada 5 minutos com o painel visível.
 
@@ -302,10 +305,10 @@ O painel lembra qual projeto do Orca você usou para cada projeto do Azure DevOp
 | **Conexão** | A organização e o PAT. Para trocar, apague o PAT guardado com a lixeira e conecte de novo. O PAT não entra no Salvar. |
 | **Projetos** | **Todos os projetos** (inclusive os que você ganhar acesso depois) ou só os marcados. Só aparecem projetos a que você tem acesso. |
 | **Board** | O projeto e o time cujo board a aba Board mostra. |
-| **Exibição** | Remover o prefixo da área dos títulos. |
+| **Exibição** | Remover o prefixo da área dos títulos; ocultar concluídos (desligado, só nas listas de filhos ou em tudo). |
 | **Atualização** | De quanto em quanto tempo a aba visível recarrega: desligado, 5, 15 ou 30 minutos. |
 
-**Nas Configurações do Orca**, em **Configurações → Plugins → Azure Boards** (rótulos em inglês: o Orca ainda não traduz configurações de plugins), ficam as mesmas opções de agrupamento, prefixo e atualização, além de **Hidden states**: os estados, separados por vírgula, que ficam fora de **Atribuídos a mim**. Ajuste ao seu processo.
+**Nas Configurações do Orca**, em **Configurações → Plugins → Azure Boards** (rótulos em inglês: o Orca ainda não traduz configurações de plugins), ficam as mesmas opções de agrupamento, prefixo, concluídos e atualização, além de **Hidden states**: os estados, separados por vírgula, que ficam fora de **Atribuídos a mim**. Ajuste ao seu processo.
 
 ### Permissões e privacidade
 

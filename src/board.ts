@@ -27,7 +27,7 @@ import type {
   TeamsResult
 } from './protocol'
 
-type Options = ListOptions & {
+export type Options = ListOptions & {
   /** The PAT owner's identity id per organization (lower case), kept by the worker. */
   meCache?: Map<string, string>
 }
@@ -169,7 +169,7 @@ export function buildBoardWiql(types: readonly string[], iterationPath: string, 
  * The id of the PAT's owner. Not required: a failure only means no item reads as `mine`.
  * Called without an `api-version`.
  */
-async function fetchMe(
+export async function fetchMe(
   conn: Connection,
   fetchImpl: FetchLike,
   options: Options

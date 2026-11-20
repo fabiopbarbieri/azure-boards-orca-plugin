@@ -17,6 +17,7 @@ import {
   type Connection,
   type FetchLike
 } from './azure'
+import { listChildren } from './children'
 import { getBoard, listBoards, listTeams } from './board'
 import { moveItem, parseMove } from './move'
 import { buildPrompt, htmlToText, workspaceNameFor } from './start'
@@ -24,9 +25,11 @@ import type {
   BoardRef,
   BoardResult,
   BoardsResult,
+  ChildrenResult,
   ConfigView,
   ErrorKind,
   GroupBy,
+  HideClosed,
   ListResult,
   MoveResult,
   OpenAgent,
@@ -65,6 +68,7 @@ type Settings = {
   hiddenStates: string[]
   groupBy: GroupBy
   stripAreaPrefix: boolean
+  hideClosed: HideClosed
   refreshMinutes: number
 }
 
@@ -84,6 +88,12 @@ function str(value: unknown): string {
 
 function isGroupBy(value: unknown): value is GroupBy {
   return GROUP_BY.includes(value as GroupBy)
+}
+
+const HIDE_CLOSED: readonly HideClosed[] = ['off', 'children', 'all']
+
+function isHideClosed(value: unknown): value is HideClosed {
+  return HIDE_CLOSED.includes(value as HideClosed)
 }
 
 /** Keeps the well-formed projects of a stored or received list, once each. */
@@ -157,6 +167,7 @@ export default function activate(orca: OrcaWorkerApi): void {
       hiddenStates: parseStates(all.hiddenStates),
       groupBy: isGroupBy(all.groupBy) ? all.groupBy : 'state',
       stripAreaPrefix: typeof all.stripAreaPrefix === 'boolean' ? all.stripAreaPrefix : true,
+      hideClosed: isHideClosed(all.hideClosed) ? all.hideClosed : 'off',
       refreshMinutes: REFRESH_MINUTES.includes(all.refreshMinutes as number)
         ? (all.refreshMinutes as number)
         : DEFAULT_REFRESH_MINUTES
@@ -212,6 +223,7 @@ export default function activate(orca: OrcaWorkerApi): void {
       projects: filter.selected,
       groupBy: settings.groupBy,
       stripAreaPrefix: settings.stripAreaPrefix,
+      hideClosed: settings.hideClosed,
       hiddenStates: settings.hiddenStates,
       refreshMinutes: settings.refreshMinutes,
       board: await readBoard()
@@ -352,6 +364,17 @@ export default function activate(orca: OrcaWorkerApi): void {
     // The board is read only for a column target, where its absence is an error.
     const result = await moveItem(conn, await readBoard(), move.id, move.target, fetchImpl, { signal })
     if (!result.ok) logFailure('move', result.error)
+    return result
+  })
+
+  orca.panels.handle('item.children', async (input, { signal }): Promise<ChildrenResult> => {
+    const id = (input as { id?: unknown } | null)?.id
+    if (typeof id !== 'number' || !Number.isInteger(id) || id <= 0) throw invalid('id must be a positive integer')
+    const auth = await credentials()
+    if (!auth.ok) return auth
+    const conn = connection(auth.organization, auth.settings, await readProjects(), auth.pat)
+    const result = await listChildren(conn, id, fetchImpl, { signal, cache, meCache, warn: (m) => orca.log(m) })
+    if (!result.ok) logFailure('children', result.error)
     return result
   })
 
@@ -587,6 +610,7 @@ export default function activate(orca: OrcaWorkerApi): void {
     if (prefs.stripAreaPrefix !== undefined && typeof prefs.stripAreaPrefix !== 'boolean') {
       throw invalid('stripAreaPrefix must be a boolean')
     }
+    if (prefs.hideClosed !== undefined && !isHideClosed(prefs.hideClosed)) throw invalid('unknown hideClosed')
     if (prefs.allProjects !== undefined && typeof prefs.allProjects !== 'boolean') {
       throw invalid('allProjects must be a boolean')
     }
@@ -622,6 +646,9 @@ export default function activate(orca: OrcaWorkerApi): void {
     }
     if (prefs.stripAreaPrefix !== undefined && prefs.stripAreaPrefix !== current.stripAreaPrefix) {
       await orca.settings.set('stripAreaPrefix', prefs.stripAreaPrefix)
+    }
+    if (prefs.hideClosed !== undefined && prefs.hideClosed !== current.hideClosed) {
+      await orca.settings.set('hideClosed', prefs.hideClosed)
     }
     if (prefs.refreshMinutes !== undefined && prefs.refreshMinutes !== current.refreshMinutes) {
       await orca.settings.set('refreshMinutes', prefs.refreshMinutes)

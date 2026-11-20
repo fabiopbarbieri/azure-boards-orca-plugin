@@ -45,9 +45,11 @@ import type {
   BoardResult,
   BoardColumn,
   BoardSummary,
+  ChildrenResult,
   ConfigView,
   ErrorKind,
   GroupBy,
+  HideClosed,
   ListError,
   ListResult,
   MoveResult,
@@ -94,6 +96,11 @@ type Messages = {
   prefixRemoved: string
   prefixKept: string
   refreshSection: string
+  hideClosedLabel: string
+  hideClosedOptions: Record<HideClosed, string>
+  /** The Display section's summary of the setting; '' when off. */
+  hideClosedSummary: Record<HideClosed, string>
+  closedHidden: (count: number) => string
   stripPrefix: string
   stripPrefixHelp: string
   refreshLabel: string
@@ -145,6 +152,11 @@ type Messages = {
   openInBrowser: string
   moveTo: string
   closeItem: string
+  showChildren: string
+  hideChildren: string
+  loadingChildren: string
+  noChildren: string
+  childrenList: string
   moving: string
   startWork: string
   preparing: string
@@ -197,6 +209,10 @@ const EN: Messages = {
   prefixRemoved: 'Area prefix removed',
   prefixKept: 'Full titles',
   refreshSection: 'Refresh',
+  hideClosedLabel: 'Hide completed items',
+  hideClosedOptions: { off: 'Off', children: 'In child lists only', all: 'Everywhere' },
+  hideClosedSummary: { off: '', children: 'completed hidden in child lists', all: 'completed hidden' },
+  closedHidden: (count) => (count === 1 ? '1 completed item hidden.' : `${count} completed items hidden.`),
   stripPrefix: 'Remove the area prefix from titles',
   stripPrefixHelp: '“[Web Team] Fix login” shows as “Fix login”.',
   refreshLabel: 'Refresh every',
@@ -241,13 +257,18 @@ const EN: Messages = {
   noMatches: 'No item matches the search.',
   other: 'Other',
   truncated: 'Showing the first 200 items',
-  tasks: (done, total) => `Tasks ${done}/${total}`,
+  tasks: (done, total) => `📋 ${done}/${total}`,
   pullRequests: (n) => (n === 1 ? '1 PR' : `${n} PRs`),
   tryAgain: 'Try again',
   openFailed: 'Orca could not open the browser.',
   openInBrowser: 'Open in browser',
   moveTo: 'Move to',
   closeItem: 'Close',
+  showChildren: 'Show child items',
+  hideChildren: 'Hide child items',
+  loadingChildren: 'Loading child items',
+  noChildren: 'No child items.',
+  childrenList: 'Child items',
   moving: 'Moving',
   startWork: 'Start work',
   preparing: 'Preparing…',
@@ -336,6 +357,10 @@ const PT: Messages = {
   prefixRemoved: 'Prefixo da área removido',
   prefixKept: 'Títulos completos',
   refreshSection: 'Atualização',
+  hideClosedLabel: 'Ocultar concluídos',
+  hideClosedOptions: { off: 'Desligado', children: 'Só nas listas de filhos', all: 'Em tudo' },
+  hideClosedSummary: { off: '', children: 'concluídos ocultos nos filhos', all: 'concluídos ocultos' },
+  closedHidden: (count) => (count === 1 ? '1 item concluído oculto.' : `${count} itens concluídos ocultos.`),
   stripPrefix: 'Remover o prefixo da área dos títulos',
   stripPrefixHelp: '“[Time Web] Ajustar login” aparece como “Ajustar login”.',
   refreshLabel: 'Atualizar a cada',
@@ -380,13 +405,18 @@ const PT: Messages = {
   noMatches: 'Nenhum item corresponde à busca.',
   other: 'Outros',
   truncated: 'Mostrando os primeiros 200 itens',
-  tasks: (done, total) => `Tarefas ${done}/${total}`,
+  tasks: (done, total) => `📋 ${done}/${total}`,
   pullRequests: (n) => (n === 1 ? '1 PR' : `${n} PRs`),
   tryAgain: 'Tentar de novo',
   openFailed: 'O Orca não conseguiu abrir o navegador.',
   openInBrowser: 'Abrir no navegador',
   moveTo: 'Mover para',
   closeItem: 'Fechar',
+  showChildren: 'Mostrar itens filhos',
+  hideChildren: 'Ocultar itens filhos',
+  loadingChildren: 'Carregando itens filhos',
+  noChildren: 'Nenhum item filho.',
+  childrenList: 'Itens filhos',
   moving: 'Movendo',
   startWork: 'Iniciar trabalho',
   preparing: 'Preparando…',
@@ -486,7 +516,7 @@ type Options<T> = { key: string } & (
 type BoardPick = { project: Project | null; team: Team | null; board: BoardSummary | null }
 
 /** What the config screen edits until Save; the PAT and the grouping are not part of it. */
-type Draft = Pick<ConfigView, 'allProjects' | 'projects' | 'stripAreaPrefix' | 'refreshMinutes' | 'board'>
+type Draft = Pick<ConfigView, 'allProjects' | 'projects' | 'stripAreaPrefix' | 'hideClosed' | 'refreshMinutes' | 'board'>
 
 /**
  * The most Orca allows. The board's longest chain is five calls in a row in the worker (the board
@@ -496,6 +526,7 @@ const REQUEST_TIMEOUT_MS = 120_000
 /** How often the panel checks whether the data is due an automatic refresh. */
 const REFRESH_CHECK_MS = 30_000
 const REFRESH_CHOICES = [0, 5, 15, 30] as const
+const HIDE_CLOSED_CHOICES: readonly HideClosed[] = ['off', 'children', 'all']
 /** The project search box appears above this many projects. */
 const SEARCH_THRESHOLD = 8
 
@@ -536,8 +567,19 @@ const draft = atom<Draft | null>(null)
  * Collapsed groups, by `${groupBy}:${name}` and, on the board, `board:${boardId}:${columnId}`.
  * Absent: the default (open; outgoing board columns folded).
  */
-/** The item whose actions are open, as `${tab}:${id}`; one at a time. */
+/**
+ * The item whose actions are open, as a path key: `${tab}:${id}` for a top-level item and
+ * `${parentKey}>${childId}` for a child. One path at a time: an item is expanded when this is its
+ * key or starts with `${key}>`.
+ */
 const expanded = atom<string | null>(null)
+/** The entry keys whose children list is shown. */
+const childrenOpen = atom<Record<string, boolean>>({})
+/** What `item.children` last answered for each parent work item id. */
+type ChildrenState = { kind: 'loading' } | { kind: 'ok'; items: BoardItem[] } | { kind: 'error'; error: ListError }
+const childrenCache = atom<Record<number, ChildrenState>>({})
+/** The `item.children` calls under way, so one parent is never asked twice at once. */
+const childrenInflight = new Map<number, Promise<void>>()
 /** The item being moved (same key), and the last refused move. */
 const movingKey = atom<string | null>(null)
 const moveError = atom<{ key: string; error: ListError } | null>(null)
@@ -625,6 +667,7 @@ function showConfig(unfoldBoard = false): void {
           allProjects: current.allProjects,
           projects: current.projects,
           stripAreaPrefix: current.stripAreaPrefix,
+          hideClosed: current.hideClosed,
           refreshMinutes: current.refreshMinutes,
           board: current.board
         }
@@ -682,6 +725,7 @@ async function loadAssigned(): Promise<void> {
   } finally {
     set(assignedBusy, false)
   }
+  if (read(assignedState).kind === 'list') void reloadChildren('assigned')
   if (reloadPending.assigned) {
     reloadPending.assigned = false
     await loadAssigned()
@@ -703,6 +747,7 @@ async function loadBoard(): Promise<void> {
   } finally {
     set(boardBusy, false)
   }
+  if (read(boardState).kind === 'ready') void reloadChildren('board')
   if (reloadPending.board) {
     reloadPending.board = false
     await loadBoard()
@@ -961,15 +1006,79 @@ async function open(item: WorkItem): Promise<void> {
   }
 }
 
+const isExpanded = (key: string): boolean => {
+  const current = read(expanded)
+  return current === key || (current !== null && current.startsWith(`${key}>`))
+}
+
+/** The work item id at the end of a path key. */
+const keyId = (key: string): number => Number(key.slice(Math.max(key.lastIndexOf('>'), key.lastIndexOf(':')) + 1))
+
+/** Folds an item and its descendants; its parent, if any, stays expanded. */
+function foldItem(key: string): void {
+  const cut = key.lastIndexOf('>')
+  set(expanded, cut < 0 ? null : key.slice(0, cut))
+  update(childrenOpen, (prev) =>
+    Object.fromEntries(Object.entries(prev).filter(([k]) => k !== key && !k.startsWith(`${key}>`)))
+  )
+}
+
 function toggleItem(key: string): void {
   set(moveError, null)
   closeStart()
-  if (read(expanded) === key) {
-    set(expanded, null)
+  if (isExpanded(key)) {
+    foldItem(key)
   } else {
     set(startSent, null)
     set(expanded, key)
+    // Open children lists stay only on the path to the item that opens.
+    update(childrenOpen, (prev) => Object.fromEntries(Object.entries(prev).filter(([k]) => key.startsWith(`${k}>`))))
   }
+}
+
+/** Asks for the children of a work item; a list already shown stays until the answer. */
+function fetchChildren(id: number): Promise<void> {
+  const running = childrenInflight.get(id)
+  if (running) return running
+  if (read(childrenCache)[id]?.kind !== 'ok') update(childrenCache, (prev) => ({ ...prev, [id]: { kind: 'loading' as const } }))
+  const run = (async () => {
+    let result: ChildrenResult
+    try {
+      result = await plugin.request('item.children', { id }, { timeoutMs: REQUEST_TIMEOUT_MS })
+    } catch (error) {
+      result = failure(error)
+    }
+    childrenInflight.delete(id)
+    const next: ChildrenState = result.ok ? { kind: 'ok', items: result.items } : { kind: 'error', error: result.error }
+    update(childrenCache, (prev) => ({ ...prev, [id]: next }))
+  })()
+  childrenInflight.set(id, run)
+  return run
+}
+
+/** Shows or hides the children list of an entry; pressing again after a failure retries. */
+function toggleChildren(key: string): void {
+  if (read(childrenOpen)[key]) {
+    update(childrenOpen, (prev) =>
+      Object.fromEntries(Object.entries(prev).filter(([k]) => k !== key && !k.startsWith(`${key}>`)))
+    )
+    if (read(expanded)?.startsWith(`${key}>`)) set(expanded, key)
+    return
+  }
+  update(childrenOpen, (prev) => ({ ...prev, [key]: true }))
+  void fetchChildren(keyId(key))
+}
+
+/**
+ * After a tab reloads: forgets the children lists that are no longer open and asks again for the
+ * ones still open on that tab.
+ */
+async function reloadChildren(tab: TabId): Promise<void> {
+  const open = Object.keys(read(childrenOpen))
+  const ids = new Set(open.map(keyId))
+  update(childrenCache, (prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => ids.has(Number(id)))))
+  const mine = new Set(open.filter((k) => k.startsWith(`${tab}:`)).map(keyId))
+  await Promise.all([...mine].map((id) => fetchChildren(id)))
 }
 
 function closeStart(): void {
@@ -1029,7 +1138,7 @@ async function toggleStart(key: string, id: number): Promise<void> {
   set(startState, { kind: 'form', options: result })
 }
 
-async function sendStart(tab: TabId, item: WorkItem, options: StartOptions): Promise<void> {
+async function sendStart(tab: TabId, key: string, item: WorkItem, options: StartOptions): Promise<void> {
   if (read(startRunning)) return
   const m = t()
   const choice = read(startTarget)
@@ -1067,7 +1176,7 @@ async function sendStart(tab: TabId, item: WorkItem, options: StartOptions): Pro
   set(startRunning, false)
   if (result.ok) {
     closeStart()
-    if (read(expanded) === `${tab}:${item.id}`) set(expanded, null)
+    if (isExpanded(key)) foldItem(key)
     set(startSent, { tab, text: sent })
   } else {
     set(startError, result.error)
@@ -1075,8 +1184,7 @@ async function sendStart(tab: TabId, item: WorkItem, options: StartOptions): Pro
 }
 
 /** Moves an item; on success the tab reloads and the other one loads when shown. */
-async function moveItem(tab: TabId, id: number, target: MoveTarget): Promise<void> {
-  const key = `${tab}:${id}`
+async function moveItem(tab: TabId, key: string, id: number, target: MoveTarget, parentId: number | null): Promise<void> {
   if (read(movingKey)) return
   set(movingKey, key)
   set(moveError, null)
@@ -1089,12 +1197,13 @@ async function moveItem(tab: TabId, id: number, target: MoveTarget): Promise<voi
   set(movingKey, null)
   update(moveAttempts, (n) => n + 1)
   if (result.ok) {
-    if (read(expanded) === key) {
+    if (isExpanded(key)) {
       closeStart()
-      set(expanded, null)
+      foldItem(key)
     }
     invalidate(tab === 'board' ? 'assigned' : 'board')
-    await loadTab(tab)
+    // The reload asks again for the open lists too, but only when it succeeds.
+    await Promise.all([parentId === null ? undefined : fetchChildren(parentId), loadTab(tab)])
   } else {
     set(moveError, { key, error: result.error })
   }
@@ -1298,7 +1407,12 @@ function ConfigScreen() {
               </Stack>
             </Collapsible>
             <BoardSection />
-            <Collapsible title={m.displaySection} description={edits.stripAreaPrefix ? m.prefixRemoved : m.prefixKept}>
+            <Collapsible
+              title={m.displaySection}
+              description={[edits.stripAreaPrefix ? m.prefixRemoved : m.prefixKept, m.hideClosedSummary[edits.hideClosed]]
+                .filter(Boolean)
+                .join(' · ')}
+            >
               <Stack gap="xs">
                 <Switch
                   label={m.stripPrefix}
@@ -1308,6 +1422,18 @@ function ConfigScreen() {
                 <Text muted size="xs">
                   {m.stripPrefixHelp}
                 </Text>
+                <Row align="center" justify="between" gap="xs">
+                  <Text size="sm">{m.hideClosedLabel}</Text>
+                  <Box width={selectWidth(HIDE_CLOSED_CHOICES.map((value) => ({ label: m.hideClosedOptions[value] })))} shrink={false}>
+                    <Select
+                      label={m.hideClosedLabel}
+                      labelHidden
+                      value={edits.hideClosed}
+                      options={HIDE_CLOSED_CHOICES.map((value) => ({ value, label: m.hideClosedOptions[value] }))}
+                      onChange={(value) => editDraft({ hideClosed: value as HideClosed })}
+                    />
+                  </Box>
+                </Row>
               </Stack>
             </Collapsible>
             <Collapsible title={m.refreshSection} description={m.refreshOptions[edits.refreshMinutes]}>
@@ -1391,7 +1517,7 @@ function StartError({ error }: { error: ListError | OrcaError }) {
 }
 
 /** The start form under an item's actions: where to send, the prompt, Send and Cancel. */
-function StartForm({ tab, item }: { tab: TabId; item: WorkItem }) {
+function StartForm({ tab, itemKey, item }: { tab: TabId; itemKey: string; item: WorkItem }) {
   const m = t()
   const state = read(startState)
   if (state.kind === 'idle') return null
@@ -1448,7 +1574,7 @@ function StartForm({ tab, item }: { tab: TabId; item: WorkItem }) {
       ) : null}
       <Textarea label={m.promptLabel} rows={8} value={prompt} onChange={(value) => set(startPrompt, value)} />
       <Row align="center" gap="xs" wrap>
-        <Button variant="solid" size="sm" disabled={running || blocked} onPress={() => void sendStart(tab, item, options)}>
+        <Button variant="solid" size="sm" disabled={running || blocked} onPress={() => void sendStart(tab, itemKey, item, options)}>
           {m.send}
         </Button>
         <Button variant="ghost" size="sm" onPress={() => closeStart()}>
@@ -1692,30 +1818,94 @@ export function selectWidth(options: readonly { label: string }[]): number {
   return Math.min(320, Math.max(120, Math.ceil(longest * 7.5) + 48))
 }
 
-/** An item that opens its actions when pressed: Close, Open in browser, Start work, Move to. */
+/**
+ * The items the "Hide completed items" setting keeps: in the child lists for `children` and
+ * `all`, in Assigned to me and the Board only for `all`.
+ */
+function withoutClosed<T extends WorkItem>(items: readonly T[], where: 'list' | 'children'): T[] {
+  const mode = read(config)?.hideClosed ?? 'off'
+  const hide = mode === 'all' || (mode === 'children' && where === 'children')
+  return hide ? items.filter((item) => item.stateCategory !== 'Completed') : [...items]
+}
+
+/** What a child shows, like a board card but with its state: type, state, assignee, counters. */
+function childDescription(item: BoardItem): string {
+  return [item.type, item.state, item.assignedTo, ...counters(item)].filter(Boolean).join(' · ')
+}
+
+/** The children of an entry: a spinner, the error, an empty note, or an Entry per child. */
+function ChildrenList({ tab, parent }: { tab: TabId; parent: { key: string; id: number } }) {
+  const m = t()
+  const state = read(childrenCache)[parent.id]
+  if (!state || state.kind === 'loading') return <Spinner label={m.loadingChildren} />
+  if (state.kind === 'error') return <ErrorBox error={state.error} />
+  if (state.items.length === 0) {
+    return (
+      <Text size="sm" muted>
+        {m.noChildren}
+      </Text>
+    )
+  }
+  const shown = withoutClosed(state.items, 'children')
+  const hidden = state.items.length - shown.length
+  const note =
+    hidden > 0 ? (
+      <Text size="sm" muted>
+        {m.closedHidden(hidden)}
+      </Text>
+    ) : null
+  if (shown.length === 0) return note
+  return (
+    <Stack gap="xs">
+    <List label={m.childrenList}>
+      {shown.map((child) => (
+        <Entry
+          key={String(child.id)}
+          tab={tab}
+          parent={parent}
+          item={child}
+          move={() => stateMove(child)}
+          description={childDescription(child)}
+          current={child.mine}
+        />
+      ))}
+    </List>
+    {note}
+    </Stack>
+  )
+}
+
+/**
+ * An item that opens its actions when pressed: Close, Open in browser, Start work, Move to and
+ * the children toggle. A child has `parent` (the entry it is listed under) and its key extends
+ * the parent's.
+ */
 function Entry({
   tab,
+  parent,
   item,
   description,
   current,
   move
 }: {
   tab: TabId
+  parent?: { key: string; id: number }
   item: WorkItem
   description: string
   current?: boolean
   move: () => MoveSpec
 }) {
   const m = t()
-  const key = `${tab}:${item.id}`
+  const key = parent ? `${parent.key}>${item.id}` : `${tab}:${item.id}`
   const icon = iconFor(item.typeIcon, item.type)
   const title = `#${item.id} ${item.title}`
-  if (read(expanded) !== key) {
+  if (!isExpanded(key)) {
     return <ListItem icon={icon} title={title} description={description} current={current} onPress={() => toggleItem(key)} />
   }
   const spec = move()
   const running = read(movingKey) === key
   const failed = read(moveError)
+  const childrenShown = read(childrenOpen)[key] === true
   // Two rows: the item itself stays pressable (pressing it again folds the actions), and a row
   // without onPress holds the controls, since a pressable row cannot contain them.
   return (
@@ -1744,14 +1934,26 @@ function Entry({
               options={spec.options}
               disabled={spec.disabled || read(movingKey) !== null}
               onChange={(value) => {
-                if (value !== spec.value) void moveItem(tab, item.id, spec.target(value))
+                if (value !== spec.value) void moveItem(tab, key, item.id, spec.target(value), parent?.id ?? null)
               }}
             />
           </Box>
+          {item.childrenTotal > 0 ? (
+            <Button
+              variant="outline"
+              size="sm"
+              icon={childrenShown ? 'collapse' : 'expand'}
+              tooltip={childrenShown ? m.hideChildren : m.showChildren}
+              onPress={() => toggleChildren(key)}
+            >
+              {m.tasks(item.childrenDone, item.childrenTotal)}
+            </Button>
+          ) : null}
           {running ? <Spinner label={m.moving} /> : null}
         </Row>
         {failed && failed.key === key ? <ErrorBox error={failed.error} /> : null}
-        {read(startKey) === key ? <StartForm tab={tab} item={item} /> : null}
+        {read(startKey) === key ? <StartForm tab={tab} itemKey={key} item={item} /> : null}
+        {childrenShown ? <ChildrenList tab={tab} parent={{ key, id: item.id }} /> : null}
       </Stack>
       </ListItem>
     </>
@@ -1826,7 +2028,7 @@ function ListView({ items }: { items: WorkItem[] }) {
   const showProject = new Set(items.map((item) => item.project)).size > 1
   const query = read(searchQuery).assigned
   const filtering = query.trim() !== ''
-  const shown = filterItems(items, query)
+  const shown = filterItems(withoutClosed(items, 'list'), query)
   const groups = groupItems(shown, groupBy)
   return (
     <Stack gap="xs">
@@ -1974,7 +2176,7 @@ function BoardView({ data }: { data: BoardData }) {
   const message = read(notice)
   const query = read(searchQuery).board
   const filtering = query.trim() !== ''
-  const layout = layoutBoard(data.columns, filterItems(data.items, query))
+  const layout = layoutBoard(data.columns, filterItems(withoutClosed(data.items, 'list'), query))
   const anyMatch = layout.other.length > 0 || layout.columns.some((section) => section.items.length > 0)
   const levels = read(boardsCache)[`${data.board.projectId}/${data.board.teamId}`]
   const fold = (key: string, byDefault: boolean) => (key in collapsed ? Boolean(collapsed[key]) : byDefault)
