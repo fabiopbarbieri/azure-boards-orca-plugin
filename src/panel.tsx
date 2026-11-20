@@ -28,6 +28,7 @@ import {
   Tabs,
   Switch,
   Text,
+  Textarea,
   Toolbar,
   update,
   type OrcaNode,
@@ -51,8 +52,14 @@ import type {
   ListResult,
   MoveResult,
   MoveTarget,
+  OpenAgent,
+  OrcaError,
+  OrcaProject,
   Prefs,
   Project,
+  StartOptionsResult,
+  StartResult,
+  StartTarget,
   Team,
   WorkItem
 } from './protocol'
@@ -136,6 +143,24 @@ type Messages = {
   moveTo: string
   closeItem: string
   moving: string
+  startWork: string
+  preparing: string
+  sending: string
+  sendTo: string
+  newWorktree: string
+  startProject: string
+  worktreeName: string
+  startAgent: string
+  promptLabel: string
+  send: string
+  cancel: string
+  noGitProject: string
+  agentFallback: string
+  capabilityTitle: string
+  capabilityBody: string
+  orcaRefused: string
+  sentToAgent: (agent: string, workspace: string) => string
+  sentWorktree: (name: string, agent: string) => string
   saveFailed: string
   errors: Record<ErrorKind, { title: string; body: string }>
 }
@@ -218,6 +243,25 @@ const EN: Messages = {
   moveTo: 'Move to',
   closeItem: 'Close',
   moving: 'Moving',
+  startWork: 'Start work',
+  preparing: 'Preparing…',
+  sending: 'Sending…',
+  sendTo: 'Send to',
+  newWorktree: 'New worktree',
+  startProject: 'Project',
+  worktreeName: 'Worktree name',
+  startAgent: 'Agent',
+  promptLabel: 'Prompt',
+  send: 'Send',
+  cancel: 'Cancel',
+  noGitProject: 'No Git project in Orca.',
+  agentFallback: 'agent',
+  capabilityTitle: 'Orca has not allowed this yet',
+  capabilityBody:
+    'Start work needs the plugin to see and control Orca’s workspaces and agents. Approve the plugin’s new permissions in Settings → Plugins.',
+  orcaRefused: 'Orca refused',
+  sentToAgent: (agent, workspace) => `Sent to ${agent} · ${workspace}`,
+  sentWorktree: (name, agent) => `Worktree ${name} created with ${agent}`,
   saveFailed: 'The settings were not saved.',
   errors: {
     notConfigured: { title: 'Not connected', body: 'Enter the organization and a PAT for it.' },
@@ -335,6 +379,25 @@ const PT: Messages = {
   moveTo: 'Mover para',
   closeItem: 'Fechar',
   moving: 'Movendo',
+  startWork: 'Iniciar trabalho',
+  preparing: 'Preparando…',
+  sending: 'Enviando…',
+  sendTo: 'Enviar para',
+  newWorktree: 'Novo worktree',
+  startProject: 'Projeto',
+  worktreeName: 'Nome do worktree',
+  startAgent: 'Agente',
+  promptLabel: 'Prompt',
+  send: 'Enviar',
+  cancel: 'Cancelar',
+  noGitProject: 'Nenhum projeto Git no Orca.',
+  agentFallback: 'agente',
+  capabilityTitle: 'O Orca ainda não permitiu isso',
+  capabilityBody:
+    'Iniciar trabalho precisa que o plugin veja e controle os workspaces e agentes do Orca. Aprove as novas permissões do plugin em Configurações → Plugins.',
+  orcaRefused: 'O Orca recusou',
+  sentToAgent: (agent, workspace) => `Enviado para ${agent} · ${workspace}`,
+  sentWorktree: (name, agent) => `Worktree ${name} criado com ${agent}`,
   saveFailed: 'As configurações não foram salvas.',
   errors: {
     notConfigured: { title: 'Não conectado', body: 'Informe a organização e um PAT dela.' },
@@ -424,6 +487,13 @@ const REFRESH_CHOICES = [0, 5, 15, 30] as const
 /** The project search box appears above this many projects. */
 const SEARCH_THRESHOLD = 8
 
+type StartOptions = Extract<StartOptionsResult, { ok: true }>
+type StartState =
+  | { kind: 'idle' }
+  | { kind: 'loading' }
+  | { kind: 'error'; error: ListError | OrcaError }
+  | { kind: 'form'; options: StartOptions }
+
 const config = atom<ConfigView | null>(null)
 const screen = atom<Screen>({ kind: 'loading' })
 /** Save, Connect and similar calls; the tabs' own loads have their own flags. */
@@ -461,6 +531,20 @@ const movingKey = atom<string | null>(null)
 const moveError = atom<{ key: string; error: ListError } | null>(null)
 /** Bumped after every move, so the Move to select remounts on its current value after a refusal. */
 const moveAttempts = atom(0)
+/** The item whose start form is open (same key as `expanded`), and what that form is showing. */
+const startKey = atom<string | null>(null)
+const startState = atom<StartState>({ kind: 'idle' })
+/** The form's fields: the target (`agent:<terminalId>` or `new`), Orca project, worktree name, prompt. */
+const startTarget = atom('new')
+const startProject = atom('')
+const startName = atom('')
+const startAgentKind = atom('')
+const startPrompt = atom('')
+const startRunning = atom(false)
+const startError = atom<ListError | OrcaError | null>(null)
+/** The last successful send, shown at the top of its tab until the next action. */
+const startSent = atom<{ tab: TabId; text: string } | null>(null)
+let startRun = 0
 const collapsedGroups = atom('collapsedGroups', {} as Record<string, boolean>, { persist: 'plugin' })
 // What the person types. Never persisted: the PAT stays in memory until Connect sends it.
 const draftOrg = atom('')
@@ -850,7 +934,115 @@ async function open(item: WorkItem): Promise<void> {
 
 function toggleItem(key: string): void {
   set(moveError, null)
-  set(expanded, read(expanded) === key ? null : key)
+  closeStart()
+  if (read(expanded) === key) {
+    set(expanded, null)
+  } else {
+    set(startSent, null)
+    set(expanded, key)
+  }
+}
+
+function closeStart(): void {
+  startRun++
+  set(startKey, null)
+  set(startState, { kind: 'idle' })
+  set(startRunning, false)
+  set(startError, null)
+}
+
+const isOrcaError = (error: ListError | OrcaError): error is OrcaError => error.kind === 'capability' || error.kind === 'orca'
+
+/** The agent's default label: `<agent> · <workspace>`, plus the title and the state in words. */
+/** The agent's state at a glance, first in its option: free, waiting for an answer, working, blocked. */
+const AGENT_STATE_ICON: Record<OpenAgent['state'], string> = { done: '🟢', waiting: '🟡', working: '⏳', blocked: '🔴' }
+
+/** Where the agent runs: its Orca project, or its workspace outside any project. */
+function agentPlace(agent: OpenAgent): string {
+  return agent.projectName || agent.workspaceName
+}
+
+function agentLabel(agent: OpenAgent): string {
+  const m = t()
+  const text = [agent.agent || m.agentFallback, agentPlace(agent), agent.title].filter(Boolean).join(' · ')
+  return `${AGENT_STATE_ICON[agent.state]} ${text}`
+}
+
+/** Opens (or closes, when open) the start form of an item and asks the worker what it offers. */
+async function toggleStart(key: string, id: number): Promise<void> {
+  if (read(startKey) === key) {
+    closeStart()
+    return
+  }
+  closeStart()
+  set(startSent, null)
+  const run = startRun
+  set(startKey, key)
+  set(startState, { kind: 'loading' })
+  let result: StartOptionsResult
+  try {
+    result = await plugin.request('start.options', { id, locale: env.locale }, { timeoutMs: REQUEST_TIMEOUT_MS })
+  } catch (error) {
+    result = failure(error)
+  }
+  if (run !== startRun) return
+  if (!result.ok) {
+    set(startState, { kind: 'error', error: result.error })
+    return
+  }
+  const first = result.agents[0]
+  set(startTarget, first ? `agent:${first.terminalId}` : 'new')
+  const last = result.projects.find((p) => p.id === result.lastProjectId) ?? result.projects[0]
+  set(startProject, last?.id ?? '')
+  set(startName, result.workspaceName)
+  set(startAgentKind, result.lastAgent || result.agentKinds[0] || '')
+  set(startPrompt, result.prompt)
+  set(startState, { kind: 'form', options: result })
+}
+
+async function sendStart(tab: TabId, item: WorkItem, options: StartOptions): Promise<void> {
+  if (read(startRunning)) return
+  const m = t()
+  const choice = read(startTarget)
+  const prompt = read(startPrompt)
+  const run = startRun
+  let target: StartTarget
+  let sent: string
+  if (choice === 'new') {
+    const project = options.projects.find((p) => p.id === read(startProject))
+    if (!project) return
+    const name = read(startName).trim()
+    const agent = read(startAgentKind)
+    if (!agent) return
+    target = { kind: 'worktree', projectId: project.id, hostId: project.hostId, name, agent }
+    sent = m.sentWorktree(name, agent)
+  } else {
+    const terminalId = choice.slice('agent:'.length)
+    const agent = options.agents.find((a) => a.terminalId === terminalId)
+    target = { kind: 'agent', terminalId }
+    sent = m.sentToAgent(agent?.agent || m.agentFallback, agent ? agentPlace(agent) : '')
+  }
+  set(startRunning, true)
+  set(startError, null)
+  let result: StartResult
+  try {
+    result = await plugin.request(
+      'start.run',
+      { id: item.id, project: item.project, prompt, target },
+      { timeoutMs: REQUEST_TIMEOUT_MS }
+    )
+  } catch (error) {
+    result = failure(error)
+  }
+  if (run !== startRun) return
+  set(startRunning, false)
+  if (result.ok) {
+    closeStart()
+    if (read(expanded) === `${tab}:${item.id}`) set(expanded, null)
+    set(startSent, { tab, text: sent })
+  } else {
+    set(startError, result.error)
+  }
 }
 
 /** Moves an item; on success the tab reloads and the other one loads when shown. */
@@ -868,7 +1060,10 @@ async function moveItem(tab: TabId, id: number, target: MoveTarget): Promise<voi
   set(movingKey, null)
   update(moveAttempts, (n) => n + 1)
   if (result.ok) {
-    if (read(expanded) === key) set(expanded, null)
+    if (read(expanded) === key) {
+      closeStart()
+      set(expanded, null)
+    }
     invalidate(tab === 'board' ? 'assigned' : 'board')
     await loadTab(tab)
   } else {
@@ -1145,6 +1340,100 @@ function ConfigScreen() {
   )
 }
 
+function StartError({ error }: { error: ListError | OrcaError }) {
+  const m = t()
+  if (!isOrcaError(error)) return <ErrorBox error={error} />
+  if (error.kind === 'capability') {
+    return (
+      <Callout tone="warning" title={m.capabilityTitle}>
+        <Text>{m.capabilityBody}</Text>
+      </Callout>
+    )
+  }
+  return (
+    <Callout tone="danger" title={m.orcaRefused}>
+      {error.detail ? <Code>{error.detail}</Code> : null}
+    </Callout>
+  )
+}
+
+/** The start form under an item's actions: where to send, the prompt, Send and Cancel. */
+function StartForm({ tab, item }: { tab: TabId; item: WorkItem }) {
+  const m = t()
+  const state = read(startState)
+  if (state.kind === 'idle') return null
+  if (state.kind === 'loading') return <Spinner label={m.preparing} />
+  if (state.kind === 'error') return <StartError error={state.error} />
+  const { options } = state
+  const running = read(startRunning)
+  const choice = read(startTarget)
+  const prompt = read(startPrompt)
+  const error = read(startError)
+  const worktree = choice === 'new'
+  const project = options.projects.find((p) => p.id === read(startProject))
+  const targets = [
+    ...options.agents.map((a) => ({ value: `agent:${a.terminalId}`, label: agentLabel(a) })),
+    { value: 'new', label: m.newWorktree }
+  ]
+  const agentKind = read(startAgentKind)
+  const blocked = prompt.trim() === '' || (worktree && (!project || !agentKind || read(startName).trim() === ''))
+  return (
+    <Stack gap="xs">
+      <InlineField label={m.sendTo}>
+        <Select label={m.sendTo} labelHidden value={choice} options={targets} onChange={(value) => set(startTarget, value)} />
+      </InlineField>
+      {worktree ? (
+        options.projects.length === 0 ? (
+          <Text muted size="sm">
+            {m.noGitProject}
+          </Text>
+        ) : (
+          <Stack gap="xs">
+            <InlineField label={m.startProject}>
+              <Select
+                label={m.startProject}
+                labelHidden
+                value={project?.id ?? ''}
+                options={options.projects.map((p: OrcaProject) => ({ value: p.id, label: p.name }))}
+                onChange={(value) => set(startProject, value)}
+              />
+            </InlineField>
+            <InlineField label={m.startAgent}>
+              <Select
+                label={m.startAgent}
+                labelHidden
+                value={agentKind}
+                options={options.agentKinds.map((kind) => ({ value: kind, label: kind }))}
+                onChange={(value) => set(startAgentKind, value)}
+              />
+            </InlineField>
+            <InlineField label={m.worktreeName}>
+              <Input label={m.worktreeName} labelHidden value={read(startName)} onChange={(value) => set(startName, value)} />
+            </InlineField>
+          </Stack>
+        )
+      ) : null}
+      <Textarea label={m.promptLabel} rows={8} value={prompt} onChange={(value) => set(startPrompt, value)} />
+      <Row align="center" gap="xs" wrap>
+        <Button variant="solid" size="sm" disabled={running || blocked} onPress={() => void sendStart(tab, item, options)}>
+          {m.send}
+        </Button>
+        <Button variant="ghost" size="sm" onPress={() => closeStart()}>
+          {m.cancel}
+        </Button>
+        {running ? <Spinner label={m.sending} /> : null}
+      </Row>
+      {error ? <StartError error={error} /> : null}
+    </Stack>
+  )
+}
+
+/** The success note of the last send, at the top of its tab. */
+function StartSent({ tab }: { tab: TabId }) {
+  const sent = read(startSent)
+  return sent && sent.tab === tab ? <Callout tone="success">{sent.text}</Callout> : null
+}
+
 /** A label on the left and its control on the right, the labels sharing one width. */
 function InlineField({ label, children }: { label: string; children: OrcaNode }) {
   return (
@@ -1360,6 +1649,16 @@ function columnMove(item: WorkItem, columns: BoardColumn[]): MoveSpec {
   }
 }
 
+/**
+ * A width that fits the longest option, so no state or column is cut: about 7.5 px per character
+ * at Orca's control text size, plus the select's padding and chevron. At most 320 px; the actions
+ * row wraps when the panel is narrower.
+ */
+export function selectWidth(options: readonly { label: string }[]): number {
+  const longest = Math.max(0, ...options.map((o) => o.label.length))
+  return Math.min(320, Math.max(120, Math.ceil(longest * 7.5) + 48))
+}
+
 /** An item that opens its actions when pressed: Open in browser, Move to, Close. */
 function Entry({
   tab,
@@ -1388,10 +1687,16 @@ function Entry({
     <ListItem icon={icon} title={title} description={description} current={current}>
       <Stack gap="xs">
         <Row align="center" gap="xs" wrap>
-          <Button variant="outline" size="sm" icon="open-external" onPress={() => open(item)}>
-            {m.openInBrowser}
+          <IconButton icon="globe" label={m.openInBrowser} variant="outline" onPress={() => open(item)} />
+          <Button
+            variant="outline"
+            size="sm"
+            icon="bot"
+            onPress={() => void toggleStart(key, item.id)}
+          >
+            {m.startWork}
           </Button>
-          <Box width={172} shrink>
+          <Box width={selectWidth(spec.options)} shrink={false}>
             <Select
               key={`${key}:${read(moveAttempts)}`}
               label={m.moveTo}
@@ -1409,6 +1714,7 @@ function Entry({
           <IconButton icon="collapse" label={m.closeItem} variant="ghost" onPress={() => toggleItem(key)} />
         </Row>
         {failed && failed.key === key ? <ErrorBox error={failed.error} /> : null}
+        {read(startKey) === key ? <StartForm tab={tab} item={item} /> : null}
       </Stack>
     </ListItem>
   )
@@ -1503,6 +1809,7 @@ function ListView({ items }: { items: WorkItem[] }) {
         </Toolbar>
       </Row>
       <SearchRow tab="assigned" />
+      <StartSent tab="assigned" />
       {message ? <Callout tone="warning">{message}</Callout> : null}
       {items.length === 0 ? (
         <EmptyState icon="check" title={m.emptyTitle} description={m.emptyBody} />
@@ -1673,6 +1980,7 @@ function BoardView({ data }: { data: BoardData }) {
         </Box>
       </Row>
       <SearchRow tab="board" />
+      <StartSent tab="board" />
       {message ? <Callout tone="warning">{message}</Callout> : null}
       {filtering && !anyMatch ? <NoMatches /> : null}
       <Stack gap="none">

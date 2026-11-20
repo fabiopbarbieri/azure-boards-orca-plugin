@@ -94,6 +94,57 @@ export type MoveTarget =
 
 export type MoveResult = { ok: true } | { ok: false; error: ListError }
 
+/** An agent already running in an Orca terminal, that "Start work" can send the prompt to. */
+export type OpenAgent = {
+  terminalId: string
+  /** The agent CLI, such as `claude` or `codex`; '' when Orca does not know it. */
+  agent: string
+  /** The terminal's title, when it has one. */
+  title: string
+  workspaceId: string
+  workspaceName: string
+  /** The Orca project of the agent's workspace; '' for a workspace outside any project. */
+  projectName: string
+  state: 'working' | 'blocked' | 'waiting' | 'done'
+}
+
+/** A Git project of Orca, where "Start work" can create a new worktree. */
+export type OrcaProject = { id: string; name: string; hostId: string }
+
+/** Why an Orca call failed: the plugin lacks a capability the person has not approved, or Orca refused. */
+export type OrcaError = { kind: 'capability' | 'orca'; detail?: string }
+
+export type StartOptionsResult =
+  | {
+      ok: true
+      agents: OpenAgent[]
+      projects: OrcaProject[]
+      /** The Orca project last used for this item's Azure DevOps project; '' when none yet. */
+      lastProjectId: string
+      /** The prompt to propose, built from the item (and its description and acceptance criteria). */
+      prompt: string
+      /** A worktree name to propose, such as `wi-123-fix-login`. */
+      workspaceName: string
+      /**
+       * The agent kinds to offer for a new worktree, such as `claude`, `codex` or `kiro`: the ones
+       * open now and in Orca's agent session history, most recent first (a short default list when
+       * none is known).
+       */
+      agentKinds: string[]
+      /** The agent last used for a new worktree from this plugin; '' when none yet. */
+      lastAgent: string
+    }
+  | { ok: false; error: ListError | OrcaError }
+
+/** Where "Start work" sends the prompt. */
+export type StartTarget =
+  /** An agent already running: the prompt is typed into its terminal and sent. */
+  | { kind: 'agent'; terminalId: string }
+  /** A new worktree in an Orca Git project, with a new agent of that kind that gets the prompt. */
+  | { kind: 'worktree'; projectId: string; hostId: string; name: string; agent: string }
+
+export type StartResult = { ok: true } | { ok: false; error: ListError | OrcaError }
+
 export type TeamsResult = { ok: true; teams: Team[] } | { ok: false; error: ListError }
 export type BoardsResult = { ok: true; boards: BoardSummary[] } | { ok: false; error: ListError }
 
@@ -199,6 +250,17 @@ declare module 'orca' {
      * state that column maps the item's type to). Needs Work Items (Read & write).
      */
     'item.move': { input: { id: number; target: MoveTarget }; output: MoveResult }
+    /**
+     * What "Start work" offers for an item: the open agents, the Orca Git projects, and a prompt
+     * and worktree name to propose, in the panel's language (`locale`, such as `pt-BR`). Reads the
+     * item's description, acceptance criteria and repro steps.
+     */
+    'start.options': { input: { id: number; locale: string }; output: StartOptionsResult }
+    /**
+     * Sends the prompt to an open agent, or creates a worktree with a new agent that gets it, then
+     * shows that terminal or workspace. Remembers the Orca project per Azure project, and the agent.
+     */
+    'start.run': { input: { id: number; project: string; prompt: string; target: StartTarget }; output: StartResult }
   }
   interface PluginPanelEvents {
     /** The settings, preferences or stored PAT changed (here or in Orca's Settings). */

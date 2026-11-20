@@ -1,5 +1,5 @@
 // Runs src/worker.ts's activate(orca) over a mock host, with globalThis.fetch swapped for a fake.
-import { afterEach, assert, mockHost, mountWorker, test } from 'orca/testing'
+import { afterEach, assert, hostError, mockHost, mountWorker, test } from 'orca/testing'
 import {
   batch,
   boardAnswer,
@@ -782,4 +782,280 @@ test('item.move maps 401/403 to writeScope and 400 to rule, logging without the 
     assertNoLeak(worker, result)
     await worker.deactivate()
   }
+})
+
+// ---- Start work ----
+
+const wsList = {
+  workspaces: [
+    { id: 'w1', kind: 'worktree', name: 'zeta', project: 'Api', path: '/z', branch: 'z', hostId: 'local', status: { state: 'working', unread: false, terminalCount: 2, lastActivityAt: null } },
+    { id: 'w2', kind: 'worktree', name: 'alpha', path: '/a', branch: 'a', hostId: 'local', status: { state: 'done', unread: false, terminalCount: 1, lastActivityAt: null } },
+    { id: 'w3', kind: 'folder', name: 'empty', path: '/e', branch: null, hostId: null, status: { state: 'inactive', unread: false, terminalCount: 0, lastActivityAt: null } }
+  ],
+  truncated: false
+}
+const agentsByWorkspace: Record<string, unknown> = {
+  w1: { agents: [
+    { terminalId: 't1', title: null, agent: null, state: 'working', stateStartedAt: 1 },
+    { terminalId: null, title: 'x', agent: 'codex', state: 'done', stateStartedAt: 1 }
+  ] },
+  w2: { agents: [{ terminalId: 't2', title: 'Fixing', agent: 'claude', state: 'waiting', stateStartedAt: 1 }] }
+}
+const orcaProjects = {
+  projects: [
+    { id: 'p2', name: 'Web', kind: 'git', hostId: 'local', path: '/w' },
+    { id: 'p1', name: 'Api', kind: 'git', hostId: 'ssh:box', path: '/a' },
+    { id: 'p3', name: 'Notes', kind: 'folder', hostId: 'local', path: '/n' },
+    { id: 'p4', name: 'Old', kind: 'git', hostId: 'local', path: '/o', hidden: true }
+  ],
+  truncated: false
+}
+const session = (agent: string, index: number) => ({
+  sessionId: `s${index}`,
+  agent,
+  title: `Session ${index}`,
+  workspaceId: null,
+  hostId: 'local',
+  branch: null,
+  createdAt: null,
+  updatedAt: 1000 - index,
+  messageCount: 1,
+  totalTokens: 10,
+  running: false
+})
+const startHost = (extra: Record<string, unknown> = {}, storage: Record<string, never> | Record<string, unknown> = {}) =>
+  mockHost({
+    settings: { organization: 'contoso' },
+    secrets: { pat: STORED },
+    storage: storage as never,
+    results: {
+      'workspace.list': wsList,
+      'agents.list': (p: { workspaceId: string }) => agentsByWorkspace[p.workspaceId] ?? { agents: [] },
+      'project.list': orcaProjects,
+      'agent.listSessions': { sessions: ['codex', 'claude', 'codex'].map(session), truncated: false },
+      ...extra
+    }
+  })
+
+const itemAnswer = json({
+  id: 42,
+  fields: {
+    'System.Title': 'Corrigir ação do login',
+    'System.WorkItemType': 'Bug',
+    'System.TeamProject': 'Web',
+    'System.Description': '<div>Login &amp; logout<br>fail</div>',
+    'Microsoft.VSTS.Common.AcceptanceCriteria': '<ul><li>works</li></ul>'
+  }
+})
+
+test('start.options gathers agents and projects and builds the prompt', async () => {
+  const fetch = useRoutes(['/_apis/wit/workitems/42', itemAnswer])
+  const worker = await mountWorker(main, { host: startHost({}, { startProjects: { Web: 'p2', Other: 'p9' } }) })
+  const result = await worker.request('start.options', { id: 42, locale: 'pt-BR' })
+  assert.ok(result.ok)
+  assert.deepEqual(
+    result.agents.map((a) => [a.terminalId, a.agent, a.title, a.workspaceId, a.workspaceName, a.projectName, a.state]),
+    [
+      ['t2', 'claude', 'Fixing', 'w2', 'alpha', '', 'waiting'],
+      ['t1', '', '', 'w1', 'zeta', 'Api', 'working']
+    ]
+  )
+  assert.deepEqual(result.projects, [
+    { id: 'p1', name: 'Api', hostId: 'ssh:box' },
+    { id: 'p2', name: 'Web', hostId: 'local' }
+  ])
+  assert.equal(result.lastProjectId, 'p2')
+  assert.equal(result.workspaceName, 'wi-42-corrigir-acao-do-login')
+  // History first (newest first, once each), then the open agents' kinds.
+  assert.deepEqual(result.agentKinds, ['codex', 'claude'])
+  assert.equal(result.lastAgent, '')
+  assert.ok(result.prompt.includes('#42'))
+  assert.ok(result.prompt.includes('https://dev.azure.com/contoso/Web/_workitems/edit/42'))
+  assert.ok(result.prompt.includes('Descrição:\nLogin & logout\nfail'))
+  assert.ok(result.prompt.includes('Critérios de aceite:\n- works'))
+  assert.match(fetch.calls[0]!.url, /^https:\/\/dev\.azure\.com\/contoso\/_apis\/wit\/workitems\/42\?fields=.*System\.Description.*&api-version=7\.1$/)
+  // The workspace without terminals is not asked for agents.
+  assert.deepEqual(worker.host.callsOf('agents.list'), [{ workspaceId: 'w1' }, { workspaceId: 'w2' }])
+  assertNoLeak(worker, result)
+  await worker.deactivate()
+})
+
+test('start.options: no remembered project and English locale', async () => {
+  useRoutes(['/_apis/wit/workitems/42', itemAnswer])
+  const worker = await mountWorker(main, { host: startHost() })
+  const result = await worker.request('start.options', { id: 42, locale: 'en-US' })
+  assert.ok(result.ok)
+  assert.equal(result.lastProjectId, '')
+  assert.ok(result.prompt.startsWith('Understand Azure Boards work item #42'))
+  await worker.deactivate()
+})
+
+test('start.options: a refused capability is a capability error', async () => {
+  useRoutes(['/_apis/wit/workitems/42', itemAnswer])
+  const host = startHost({
+    'agents.list': () => {
+      throw hostError('capability_denied', 'no agent:read')
+    }
+  })
+  const worker = await mountWorker(main, { host })
+  const result = await worker.request('start.options', { id: 42, locale: 'en' })
+  assert.deepEqual(result, { ok: false, error: { kind: 'capability', detail: 'agents.list' } })
+  assertNoLeak(worker, result)
+  await worker.deactivate()
+})
+
+test('start.options: another host error is an orca error', async () => {
+  useRoutes(['/_apis/wit/workitems/42', itemAnswer])
+  const host = startHost({
+    'project.list': () => {
+      throw hostError('unavailable', 'Orca is busy')
+    }
+  })
+  const worker = await mountWorker(main, { host })
+  const result = await worker.request('start.options', { id: 42, locale: 'en' })
+  assert.deepEqual(result, { ok: false, error: { kind: 'orca', detail: 'Orca is busy' } })
+  await worker.deactivate()
+})
+
+test('start.options: a missing work item is notFound; bad input is refused', async () => {
+  const fetch = useRoutes(['/_apis/wit/workitems/42', json({ message: `gone ${FAKE_PAT}` }, 404)])
+  const worker = await mountWorker(main, { host: startHost() })
+  const result = await worker.request('start.options', { id: 42, locale: 'en' })
+  assert.ok(!result.ok && result.error.kind === 'notFound')
+  assertNoLeak(worker, result)
+  const calls = fetch.calls.length
+  for (const input of [{ id: 0, locale: 'en' }, { id: 1.5, locale: 'en' }, { id: 1, locale: 3 }, { locale: 'en' }]) {
+    await assert.rejects(
+      () => worker.request('start.options', input as never),
+      (error: unknown) => (error as { code?: string }).code === 'invalid_params'
+    )
+  }
+  assert.equal(fetch.calls.length, calls)
+  await worker.deactivate()
+})
+
+test('start.options without a PAT is notConfigured', async () => {
+  const worker = await mountWorker(main, { host: mockHost({ settings: { organization: 'contoso' } }) })
+  assert.deepEqual(await worker.request('start.options', { id: 1, locale: 'en' }), { ok: false, error: { kind: 'notConfigured' } })
+  await worker.deactivate()
+})
+
+test('start.run sends the prompt to an agent, then focuses its terminal', async () => {
+  const host = startHost({ 'terminal.sendText': { accepted: true }, 'terminal.focus': { focused: true } })
+  const worker = await mountWorker(main, { host })
+  const result = await worker.request('start.run', { id: 42, project: 'Web', prompt: 'Do it', target: { kind: 'agent', terminalId: 't2' } })
+  assert.deepEqual(result, { ok: true })
+  assert.deepEqual(worker.host.callsOf('terminal.sendText'), [{ terminalId: 't2', text: 'Do it', enter: true }])
+  assert.deepEqual(worker.host.callsOf('terminal.focus'), [{ terminalId: 't2' }])
+  assert.deepEqual(worker.refusals, [])
+  await worker.deactivate()
+})
+
+test('start.run: a terminal that refuses the text, and a focus that fails', async () => {
+  const refuse = await mountWorker(main, { host: startHost({ 'terminal.sendText': { accepted: false } }) })
+  assert.deepEqual(
+    await refuse.request('start.run', { id: 1, project: 'Web', prompt: 'p', target: { kind: 'agent', terminalId: 't' } }),
+    { ok: false, error: { kind: 'orca', detail: 'the terminal did not accept the text' } }
+  )
+  assert.deepEqual(refuse.host.callsOf('terminal.focus'), [])
+  await refuse.deactivate()
+
+  const host = startHost({
+    'terminal.sendText': { accepted: true },
+    'terminal.focus': () => {
+      throw hostError('action_failed', 'no window')
+    }
+  })
+  const worker = await mountWorker(main, { host })
+  assert.deepEqual(await worker.request('start.run', { id: 1, project: 'Web', prompt: 'p', target: { kind: 'agent', terminalId: 't' } }), { ok: true })
+  await worker.deactivate()
+})
+
+test('start.run creates a worktree with the chosen agent and remembers the project and the agent', async () => {
+  const host = startHost({ 'workspace.create': { workspaceId: 'w9', terminalId: 't9' } }, { startProjects: { Other: 'p9' } })
+  const worker = await mountWorker(main, { host })
+  const target = { kind: 'worktree', projectId: 'p1', hostId: 'ssh:box', name: 'wi-42-fix', agent: 'kiro' } as const
+  assert.deepEqual(await worker.request('start.run', { id: 42, project: 'Web', prompt: 'Private text', target }), { ok: true })
+  assert.deepEqual(worker.host.callsOf('workspace.create'), [
+    { projectId: 'p1', hostId: 'ssh:box', name: 'wi-42-fix', agent: 'kiro', prompt: 'Private text', open: true }
+  ])
+  assert.deepEqual(worker.host.data().storage.startProjects, { Other: 'p9', Web: 'p1' })
+  assert.equal(worker.host.data().storage.startAgent, 'kiro')
+  assert.deepEqual(worker.refusals, [])
+  assert.ok(!worker.logs.join('|').includes('Private text'))
+  await worker.deactivate()
+})
+
+test('start.run: a refused capability is reported and nothing is stored', async () => {
+  const host = startHost({
+    'workspace.create': () => {
+      throw hostError('capability_denied', 'no workspace:write')
+    }
+  })
+  const worker = await mountWorker(main, { host })
+  const result = await worker.request('start.run', {
+    id: 1,
+    project: 'Web',
+    prompt: 'Private text',
+    target: { kind: 'worktree', projectId: 'p1', hostId: 'local', name: 'n', agent: 'claude' }
+  })
+  assert.deepEqual(result, { ok: false, error: { kind: 'capability', detail: 'workspace.create' } })
+  assert.equal(worker.host.data().storage.startProjects, undefined)
+  assert.ok(worker.logs.some((l) => l.startsWith('start failed: capability')))
+  assert.ok(!worker.logs.join('|').includes('Private text'))
+  await worker.deactivate()
+})
+
+test('start.run refuses invalid input with invalid_params and calls nothing', async () => {
+  const worker = await mountWorker(main, { host: startHost() })
+  const agent = { kind: 'agent', terminalId: 't' }
+  for (const input of [
+    { id: 0, project: 'Web', prompt: 'p', target: agent },
+    { id: 1, project: 3, prompt: 'p', target: agent },
+    { id: 1, project: 'Web', prompt: '  ', target: agent },
+    { id: 1, project: 'Web', prompt: 'x'.repeat(20001), target: agent },
+    { id: 1, project: 'Web', prompt: 'p', target: { kind: 'agent', terminalId: '' } },
+    { id: 1, project: 'Web', prompt: 'p', target: { kind: 'worktree', projectId: 'p', hostId: '', name: 'n', agent: 'claude' } },
+    { id: 1, project: 'Web', prompt: 'p', target: { kind: 'worktree', projectId: 'p', hostId: 'local', name: 'n' } },
+    { id: 1, project: 'Web', prompt: 'p', target: { kind: 'other' } },
+    { id: 1, project: 'Web', prompt: 'p' }
+  ]) {
+    await assert.rejects(
+      () => worker.request('start.run', input as never),
+      (error: unknown) => (error as { code?: string }).code === 'invalid_params'
+    )
+  }
+  assert.deepEqual(worker.host.callsOf('terminal.sendText'), [])
+  assert.deepEqual(worker.host.callsOf('workspace.create'), [])
+  await worker.deactivate()
+})
+
+test('start.options: agent kinds fall back to the open agents, then to defaults; the last agent is remembered', async () => {
+  useRoutes(['/_apis/wit/workitems/42', itemAnswer])
+  const noHistory = startHost(
+    {
+      'agent.listSessions': () => {
+        throw hostError('capability_denied', 'no agent:read')
+      }
+    },
+    { startAgent: 'claude' }
+  )
+  const worker = await mountWorker(main, { host: noHistory })
+  const result = await worker.request('start.options', { id: 42, locale: 'en-US' })
+  assert.ok(result.ok)
+  assert.deepEqual(result.agentKinds, ['claude'])
+  assert.equal(result.lastAgent, 'claude')
+  await worker.deactivate()
+
+  useRoutes(['/_apis/wit/workitems/42', itemAnswer])
+  const empty = startHost({
+    'workspace.list': { workspaces: [], truncated: false },
+    'agent.listSessions': { sessions: [], truncated: false }
+  })
+  const bare = await mountWorker(main, { host: empty })
+  const fallback = await bare.request('start.options', { id: 42, locale: 'en-US' })
+  assert.ok(fallback.ok)
+  assert.deepEqual(fallback.agentKinds, ['claude', 'codex', 'kiro', 'gemini'])
+  assert.equal(fallback.lastAgent, '')
+  await bare.deactivate()
 })

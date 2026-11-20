@@ -10,7 +10,9 @@ import type {
   ListResult,
   Prefs,
   Project,
+  OpenAgent,
   ProjectsResult,
+  StartOptionsResult,
   StateCategory,
   WorkItem
 } from './protocol'
@@ -169,7 +171,7 @@ test('lists items; pressing one expands it and Open in browser opens it', async 
 
   await view.press({ label: '#2 Two' })
   assert.deepEqual(host.callsOf('shell.openExternal'), [])
-  await view.press({ text: 'Open in browser' })
+  await view.press({ label: 'Open in browser' })
   assert.deepEqual(host.callsOf('shell.openExternal'), [{ url: `${URL_}/Web/_workitems/edit/2` }])
   clean(view, host)
   await view.unmount()
@@ -672,7 +674,7 @@ test('board: columns in order with counts and WIP limits, halves, folded outgoin
   assert.ok(JSON.stringify(view.persisted.plugin).includes('board:b-stories:Closed'))
   await view.press({ label: '#1 Card 1' })
   assert.deepEqual(host.callsOf('shell.openExternal'), [])
-  await view.press({ text: 'Open in browser' })
+  await view.press({ label: 'Open in browser' })
   assert.deepEqual(host.callsOf('shell.openExternal'), [{ url: `${URL_}/Web/_workitems/edit/1` }])
   clean(view, host)
   await view.unmount()
@@ -944,17 +946,17 @@ test('actions: one item expands at a time, without opening the browser, and Clos
   const w = worker(configured, listed(item(1, 'One'), item(2, 'Two')))
   const host = mockHost({ requests: w.requests })
   const view = await mount(panel, { host })
-  assert.equal(view.find({ text: 'Open in browser' }), null)
+  assert.equal(view.find({ label: 'Open in browser' }), null)
   await view.press({ label: '#1 One' })
-  assert.ok(view.find({ text: 'Open in browser' }))
+  assert.ok(view.find({ label: 'Open in browser' }))
   assert.ok(view.find({ type: 'Select', label: 'Move to' }))
   assert.equal(view.find({ type: 'ListItem', label: '#1 One' })?.props.onPress, undefined)
   // Another item takes over.
   await view.press({ label: '#2 Two' })
-  assert.equal(view.findAll({ text: 'Open in browser' }).length, 1)
+  assert.equal(view.findAll({ label: 'Open in browser' }).length, 1)
   assert.ok(view.find({ label: '#1 One' }))
   await view.press({ label: 'Close' })
-  assert.equal(view.find({ text: 'Open in browser' }), null)
+  assert.equal(view.find({ label: 'Open in browser' }), null)
   assert.deepEqual(host.callsOf('shell.openExternal'), [])
   clean(view, host)
   await view.unmount()
@@ -974,7 +976,7 @@ test('actions: Move to a state sends the request, then collapses and reloads', a
   await view.select({ type: 'Select', label: 'Move to' }, 'Closed')
   assert.deepEqual(moves, [{ id: 1, target: { kind: 'state', state: 'Closed' } }])
   assert.equal(w.state.listCalls, 2)
-  assert.equal(view.find({ text: 'Open in browser' }), null)
+  assert.equal(view.find({ label: 'Open in browser' }), null)
   clean(view, host)
   await view.unmount()
 })
@@ -1031,7 +1033,7 @@ test('actions: a refused move stays expanded and shows the error inline', async 
   await view.select({ type: 'Select', label: 'Move to' }, 'Closed')
   assert.ok(view.find({ label: 'The PAT can’t change work items' }))
   assert.ok(view.find({ text: 'HTTP 403' }))
-  assert.ok(view.find({ text: 'Open in browser' }))
+  assert.ok(view.find({ label: 'Open in browser' }))
   assert.equal(w.state.listCalls, 1)
   // Closing hides the error with the item.
   await view.press({ label: 'Close' })
@@ -1062,12 +1064,250 @@ test('actions: speaks Brazilian Portuguese, including a rule refusal', async () 
   const host = mockHost({ requests: w.requests })
   const view = await mount(panel, { host, locale: 'pt-BR' })
   await view.press({ label: '#1 One' })
-  assert.ok(view.find({ text: 'Abrir no navegador' }))
+  assert.ok(view.find({ label: 'Abrir no navegador' }))
   assert.ok(view.find({ type: 'Select', label: 'Mover para' }))
   await view.select({ type: 'Select', label: 'Mover para' }, 'New')
   assert.ok(view.find({ label: 'O Azure DevOps recusou a mudança' }))
   assert.ok(view.find({ text: 'TF401320' }))
   assert.ok(view.find({ label: 'Fechar' }))
+  await view.unmount()
+})
+
+// ---------------------------------------------------------------------------------------------
+// Start work
+
+const agent = (terminalId: string, over: Partial<OpenAgent> = {}): OpenAgent => ({
+  terminalId,
+  agent: 'claude',
+  title: '',
+  workspaceId: `ws-${terminalId}`,
+  workspaceName: `work-${terminalId}`,
+  projectName: '',
+  state: 'waiting',
+  ...over
+})
+
+const startOptions = (over: Partial<Extract<StartOptionsResult, { ok: true }>> = {}): StartOptionsResult => ({
+  ok: true,
+  agents: [agent('t1', { title: 'Login' }), agent('t2', { agent: '', state: 'working' })],
+  projects: [
+    { id: 'p1', name: 'Web', hostId: 'h1' },
+    { id: 'p2', name: 'Api', hostId: 'h2' }
+  ],
+  lastProjectId: 'p2',
+  prompt: 'Fix #1 One',
+  workspaceName: 'wi-1-one',
+  agentKinds: ['codex', 'claude', 'kiro'],
+  lastAgent: 'kiro',
+  ...over
+})
+
+function starter(options: StartOptionsResult, run: unknown = { ok: true }) {
+  const calls = { options: [] as unknown[], run: [] as unknown[] }
+  const w = worker(configured, listed(item(1, 'One'), item(2, 'Two')), {
+    'start.options': (input: unknown) => (calls.options.push(input), options),
+    'start.run': (input: unknown) => (calls.run.push(input), run)
+  })
+  return { calls, w }
+}
+
+test('start: opening the form asks for the options with the locale and defaults to the first agent', async () => {
+  const { calls, w } = starter(startOptions())
+  const host = mockHost({ requests: w.requests })
+  const view = await mount(panel, { host })
+  await view.press({ label: '#1 One' })
+  assert.equal(view.find({ type: 'Select', label: 'Send to' }), null)
+  await view.press({ text: 'Start work' })
+  assert.equal(calls.options.length, 1)
+  assert.equal((calls.options[0] as { id: number }).id, 1)
+  assert.ok(/^en/i.test((calls.options[0] as { locale: string }).locale))
+  const select = view.find({ type: 'Select', label: 'Send to' })
+  assert.equal(select?.props.value, 'agent:t1')
+  assert.deepEqual(select?.props.options, [
+    { value: 'agent:t1', label: '🟡 claude · work-t1 · Login' },
+    { value: 'agent:t2', label: '⏳ agent · work-t2' },
+    { value: 'new', label: 'New worktree' }
+  ])
+  assert.equal(view.find({ type: 'Textarea', label: 'Prompt' })?.props.value, 'Fix #1 One')
+  assert.equal(view.find({ type: 'Select', label: 'Project' }), null)
+  clean(view, host)
+  await view.unmount()
+})
+
+test('start: Send to an agent sends the prompt, closes the form and collapses the item', async () => {
+  const { calls, w } = starter(startOptions())
+  const host = mockHost({ requests: w.requests })
+  const view = await mount(panel, { host })
+  await view.press({ label: '#1 One' })
+  await view.press({ text: 'Start work' })
+  await view.press({ text: 'Send' })
+  assert.deepEqual(calls.run, [{ id: 1, project: 'Web', prompt: 'Fix #1 One', target: { kind: 'agent', terminalId: 't1' } }])
+  assert.equal(view.find({ label: 'Open in browser' }), null)
+  assert.equal(view.find({ type: 'Textarea', label: 'Prompt' }), null)
+  assert.ok(view.find({ text: 'Sent to claude · work-t1' }))
+  // The note stays until another item opens.
+  await view.press({ label: '#2 Two' })
+  assert.equal(view.find({ text: 'Sent to claude · work-t1' }), null)
+  clean(view, host)
+  await view.unmount()
+})
+
+test('start: New worktree shows the project and the name, and sends the worktree target', async () => {
+  const { calls, w } = starter(startOptions())
+  const host = mockHost({ requests: w.requests })
+  const view = await mount(panel, { host })
+  await view.press({ label: '#1 One' })
+  await view.press({ text: 'Start work' })
+  await view.select({ type: 'Select', label: 'Send to' }, 'new')
+  assert.equal(view.find({ type: 'Select', label: 'Project' })?.props.value, 'p2')
+  assert.equal(view.find({ type: 'Input', label: 'Worktree name' })?.props.value, 'wi-1-one')
+  // The agent: the one used last, among the kinds Orca knows.
+  const agentSelect = view.find({ type: 'Select', label: 'Agent' })
+  assert.equal(agentSelect?.props.value, 'kiro')
+  assert.deepEqual((agentSelect?.props.options as { value: string }[]).map((o) => o.value), ['codex', 'claude', 'kiro'])
+  await view.select({ type: 'Select', label: 'Agent' }, 'codex')
+  await view.type({ type: 'Input', label: 'Worktree name' }, 'my-tree', { replace: true })
+  await view.press({ text: 'Send' })
+  assert.deepEqual(calls.run, [
+    {
+      id: 1,
+      project: 'Web',
+      prompt: 'Fix #1 One',
+      target: { kind: 'worktree', projectId: 'p2', hostId: 'h2', name: 'my-tree', agent: 'codex' }
+    }
+  ])
+  assert.ok(view.find({ text: 'Worktree my-tree created with codex' }))
+  clean(view, host)
+  await view.unmount()
+})
+
+test('start: without agents the form starts on New worktree; no projects disables Send', async () => {
+  const { w } = starter(startOptions({ agents: [], projects: [], lastProjectId: '' }))
+  const host = mockHost({ requests: w.requests })
+  const view = await mount(panel, { host })
+  await view.press({ label: '#1 One' })
+  await view.press({ text: 'Start work' })
+  assert.equal(view.find({ type: 'Select', label: 'Send to' })?.props.value, 'new')
+  assert.ok(view.find({ text: 'No Git project in Orca.' }))
+  assert.equal(view.find({ type: 'Button', text: 'Send' })?.props.disabled, true)
+  await view.unmount()
+})
+
+test('start: the edited prompt is sent, and a blank one disables Send', async () => {
+  const { calls, w } = starter(startOptions())
+  const host = mockHost({ requests: w.requests })
+  const view = await mount(panel, { host })
+  await view.press({ label: '#1 One' })
+  await view.press({ text: 'Start work' })
+  await view.type({ type: 'Textarea', label: 'Prompt' }, '   ', { replace: true })
+  assert.equal(view.find({ type: 'Button', text: 'Send' })?.props.disabled, true)
+  await view.type({ type: 'Textarea', label: 'Prompt' }, 'Do it differently', { replace: true })
+  await view.press({ text: 'Send' })
+  assert.equal((calls.run[0] as { prompt: string }).prompt, 'Do it differently')
+  await view.unmount()
+})
+
+test('start: Cancel, collapsing and opening another item close the form', async () => {
+  const { w } = starter(startOptions())
+  const host = mockHost({ requests: w.requests })
+  const view = await mount(panel, { host })
+  await view.press({ label: '#1 One' })
+  await view.press({ text: 'Start work' })
+  await view.press({ text: 'Cancel' })
+  assert.equal(view.find({ type: 'Textarea', label: 'Prompt' }), null)
+  assert.ok(view.find({ label: 'Open in browser' }))
+  await view.press({ text: 'Start work' })
+  assert.ok(view.find({ type: 'Textarea', label: 'Prompt' }))
+  await view.press({ text: 'Start work' })
+  assert.equal(view.find({ type: 'Textarea', label: 'Prompt' }), null)
+  await view.press({ text: 'Start work' })
+  await view.press({ label: '#2 Two' })
+  assert.equal(view.find({ type: 'Textarea', label: 'Prompt' }), null)
+  await view.unmount()
+})
+
+test('start: a capability error shows the approval callout', async () => {
+  const { w } = starter({ ok: false, error: { kind: 'capability' } })
+  const host = mockHost({ requests: w.requests })
+  const view = await mount(panel, { host })
+  await view.press({ label: '#1 One' })
+  await view.press({ text: 'Start work' })
+  assert.ok(view.find({ label: 'Orca has not allowed this yet' }))
+  assert.ok(view.find({ text: /Approve the plugin’s new permissions in Settings → Plugins\./ }))
+  await view.unmount()
+})
+
+test('start: an Orca refusal and an Azure error are shown', async () => {
+  const orca = starter({ ok: false, error: { kind: 'orca', detail: 'no such repo' } })
+  let host = mockHost({ requests: orca.w.requests })
+  let view = await mount(panel, { host })
+  await view.press({ label: '#1 One' })
+  await view.press({ text: 'Start work' })
+  assert.ok(view.find({ label: 'Orca refused' }))
+  assert.ok(view.find({ text: 'no such repo' }))
+  await view.unmount()
+
+  const azure = starter({ ok: false, error: { kind: 'writeScope', detail: 'HTTP 403' } })
+  host = mockHost({ requests: azure.w.requests })
+  view = await mount(panel, { host })
+  await view.press({ label: '#1 One' })
+  await view.press({ text: 'Start work' })
+  assert.ok(view.find({ text: 'HTTP 403' }))
+  await view.unmount()
+})
+
+test('start: a failed send keeps the form with the error', async () => {
+  const { w } = starter(startOptions(), { ok: false, error: { kind: 'orca', detail: 'terminal gone' } })
+  const host = mockHost({ requests: w.requests })
+  const view = await mount(panel, { host })
+  await view.press({ label: '#1 One' })
+  await view.press({ text: 'Start work' })
+  await view.press({ text: 'Send' })
+  assert.ok(view.find({ type: 'Textarea', label: 'Prompt' }))
+  assert.ok(view.find({ label: 'Orca refused' }))
+  assert.ok(view.find({ text: 'terminal gone' }))
+  assert.ok(view.find({ label: 'Open in browser' }))
+  assert.equal(view.find({ text: /^Sent to/ }), null)
+  await view.unmount()
+})
+
+test('start: speaks Brazilian Portuguese', async () => {
+  const { calls, w } = starter(startOptions())
+  const host = mockHost({ requests: w.requests })
+  const view = await mount(panel, { host, locale: 'pt-BR' })
+  await view.press({ label: '#1 One' })
+  await view.press({ text: 'Iniciar trabalho' })
+  assert.equal((calls.options[0] as { locale: string }).locale, 'pt-BR')
+  const select = view.find({ type: 'Select', label: 'Enviar para' })
+  assert.deepEqual((select?.props.options as { label: string }[]).map((o) => o.label), [
+    '🟡 claude · work-t1 · Login',
+    '⏳ agente · work-t2',
+    'Novo worktree'
+  ])
+  assert.ok(view.find({ type: 'Textarea', label: 'Prompt' }))
+  await view.select({ type: 'Select', label: 'Enviar para' }, 'new')
+  assert.ok(view.find({ type: 'Select', label: 'Projeto' }))
+  assert.ok(view.find({ type: 'Input', label: 'Nome do worktree' }))
+  assert.ok(view.find({ type: 'Select', label: 'Agente' }))
+  await view.press({ text: 'Enviar' })
+  assert.ok(view.find({ text: 'Worktree wi-1-one criado com kiro' }))
+  await view.unmount()
+})
+
+test('start: the Board tab has the button and shows the note', async () => {
+  const calls: unknown[] = []
+  const w = worker(withBoard, listed(), {
+    'board.get': boardResult(),
+    'start.options': startOptions(),
+    'start.run': (input: unknown) => (calls.push(input), { ok: true })
+  })
+  const host = mockHost({ requests: w.requests })
+  const view = await mount(panel, { host, persisted: { plugin: { activeTab: 'board' } } })
+  await view.press({ label: '#2 Card 2' })
+  await view.press({ text: 'Start work' })
+  await view.press({ text: 'Send' })
+  assert.equal(calls.length, 1)
+  assert.ok(view.find({ text: 'Sent to claude · work-t1' }))
   await view.unmount()
 })
 
@@ -1138,6 +1378,30 @@ test('search: speaks Brazilian Portuguese', async () => {
   assert.equal(input?.props.placeholder, 'Número ou título')
   await view.type({ type: 'Input', label: 'Buscar por número ou título' }, 'x')
   assert.ok(view.find({ text: 'Nenhum item corresponde à busca.' }))
+  clean(view, host)
+  await view.unmount()
+})
+
+test('actions: the Move to select is as wide as its longest option, within bounds', () => {
+  assert.equal(panel.selectWidth([{ label: 'New' }]), 120)
+  const long = panel.selectWidth([{ label: 'New' }, { label: 'In Progress · Em andamento' }])
+  assert.ok(long >= 26 * 7.5 + 48 && long <= 320)
+  assert.equal(panel.selectWidth([{ label: 'x'.repeat(200) }]), 320)
+})
+
+test('start: an agent is named by its Orca project, or by its workspace outside any project', async () => {
+  const { w } = starter(startOptions({ agents: [agent('t1', { projectName: 'Web', workspaceName: 'main' }), agent('t2')] }))
+  const host = mockHost({ requests: w.requests })
+  const view = await mount(panel, { host })
+  await view.press({ label: '#1 One' })
+  await view.press({ text: 'Start work' })
+  const select = view.find({ type: 'Select', label: 'Send to' })
+  assert.deepEqual((select?.props.options as { label: string }[]).map((o) => o.label).slice(0, 2), [
+    '🟡 claude · Web',
+    '🟡 claude · work-t2'
+  ])
+  await view.press({ text: 'Send' })
+  assert.ok(view.find({ text: 'Sent to claude · Web' }))
   clean(view, host)
   await view.unmount()
 })

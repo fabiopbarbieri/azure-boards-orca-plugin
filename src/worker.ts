@@ -5,16 +5,21 @@
 // ever sent there: after the organization changes, the panel asks for a PAT again.
 import type { OrcaWorkerApi } from 'orca/worker'
 import {
+  API_VERSION,
+  cleanTitle,
   createMetadataCache,
   listAssigned,
   listProjects,
   parseOrganization,
   parseStates,
+  request,
+  workItemUrl,
   type Connection,
   type FetchLike
 } from './azure'
 import { getBoard, listBoards, listTeams } from './board'
 import { moveItem, parseMove } from './move'
+import { buildPrompt, htmlToText, workspaceNameFor } from './start'
 import type {
   BoardRef,
   BoardResult,
@@ -24,15 +29,30 @@ import type {
   GroupBy,
   ListResult,
   MoveResult,
+  OpenAgent,
+  OrcaError,
+  OrcaProject,
   Prefs,
   Project,
   ProjectsResult,
+  StartOptionsResult,
+  StartResult,
+  StartTarget,
   TeamsResult
 } from './protocol'
 
 const PAT = 'pat'
 const PROJECTS = 'projects'
 const BOARD = 'board'
+const START_PROJECTS = 'startProjects'
+const START_AGENT = 'startAgent'
+/** Offered for a new worktree when Orca knows no agent yet. */
+const DEFAULT_AGENT_KINDS = ['claude', 'codex', 'kiro', 'gemini']
+const MAX_SESSIONS = 200
+const MAX_AGENT_WORKSPACES = 40
+const MAX_PROMPT = 20000
+const START_FIELDS =
+  'System.Title,System.AreaPath,System.WorkItemType,System.TeamProject,System.Description,Microsoft.VSTS.Common.AcceptanceCriteria,Microsoft.VSTS.TCM.ReproSteps'
 const GROUP_BY: readonly GroupBy[] = ['none', 'state', 'boardColumn']
 const REFRESH_MINUTES: readonly number[] = [0, 5, 15, 30]
 const DEFAULT_REFRESH_MINUTES = 5
@@ -98,6 +118,28 @@ function cleanBoard(value: unknown): BoardRef | null {
     out[key] = text
   }
   return out as BoardRef
+}
+
+/** A host error as the panel shows it: a missing capability, or Orca refusing. */
+function orcaError(method: string, error: unknown): OrcaError {
+  const code = (error as { code?: unknown } | null)?.code
+  if (code === 'capability_denied' || code === 'not_permitted') return { kind: 'capability', detail: method }
+  const message = error instanceof Error ? error.message : String(error)
+  return { kind: 'orca', detail: message }
+}
+
+/** Tags a rejected host call with its method, so the mapping above can name it. */
+class HostCallError extends Error {
+  constructor(
+    readonly method: string,
+    readonly cause: unknown
+  ) {
+    super(cause instanceof Error ? cause.message : String(cause))
+  }
+}
+
+function nonEmpty(value: unknown): value is string {
+  return typeof value === 'string' && value.trim() !== ''
 }
 
 export default function activate(orca: OrcaWorkerApi): void {
@@ -311,6 +353,210 @@ export default function activate(orca: OrcaWorkerApi): void {
     const result = await moveItem(conn, await readBoard(), move.id, move.target, fetchImpl, { signal })
     if (!result.ok) logFailure('move', result.error)
     return result
+  })
+
+  /** A host call whose rejection names the method. */
+  async function host<T>(method: string, call: () => Promise<T>): Promise<T> {
+    try {
+      return await call()
+    } catch (error) {
+      throw new HostCallError(method, error)
+    }
+  }
+
+  function startFailure(error: unknown): { ok: false; error: OrcaError } {
+    const result =
+      error instanceof HostCallError ? orcaError(error.method, error.cause) : orcaError('', error)
+    orca.log(`start failed: ${result.kind}${result.kind === 'capability' ? ` (${result.detail})` : ''}`)
+    return { ok: false, error: result }
+  }
+
+  async function gatherAgents(): Promise<OpenAgent[]> {
+    const { workspaces } = await host('workspace.list', () => orca.host.call('workspace.list', { includeStatus: true }))
+    const withTerminals = workspaces
+      .filter((w) => !w.status || w.status.terminalCount > 0)
+      .slice(0, MAX_AGENT_WORKSPACES)
+    const lists = await Promise.all(
+      withTerminals.map(async (w) => {
+        const { agents } = await host('agents.list', () => orca.host.call('agents.list', { workspaceId: w.id }))
+        return agents.flatMap((a): OpenAgent[] =>
+          a.terminalId
+            ? [
+                {
+                  terminalId: a.terminalId,
+                  agent: a.agent ?? '',
+                  title: a.title ?? '',
+                  workspaceId: w.id,
+                  workspaceName: w.name,
+                  projectName: w.project ?? '',
+                  state: a.state
+                }
+              ]
+            : []
+        )
+      })
+    )
+    const place = (a: OpenAgent) => a.projectName || a.workspaceName
+    const idle = (a: OpenAgent) => (a.state === 'waiting' || a.state === 'done' ? 0 : 1)
+    return lists.flat().sort((a, b) => idle(a) - idle(b) || place(a).localeCompare(place(b)))
+  }
+
+  /**
+   * The agent kinds the person uses: from Orca's session history (newest first), then the open
+   * agents. The history is a nicety: when it cannot be read, the open agents and defaults remain.
+   */
+  async function gatherAgentKinds(open: readonly OpenAgent[]): Promise<string[]> {
+    let sessions: { agent: string }[] = []
+    try {
+      sessions = (await orca.host.call('agent.listSessions', { limit: MAX_SESSIONS })).sessions
+    } catch (error) {
+      const reason = (error as { code?: unknown; message?: unknown })?.code ?? (error as Error)?.message
+      orca.log(`start: agent session history unavailable (${String(reason)})`)
+    }
+    const kinds: string[] = []
+    for (const kind of [...sessions.map((s) => s.agent), ...open.map((a) => a.agent)]) {
+      const name = typeof kind === 'string' ? kind.trim() : ''
+      if (name && !kinds.includes(name)) kinds.push(name)
+    }
+    return kinds.length > 0 ? kinds : [...DEFAULT_AGENT_KINDS]
+  }
+
+  async function gatherProjects(): Promise<OrcaProject[]> {
+    const { projects } = await host('project.list', () => orca.host.call('project.list'))
+    return projects
+      .filter((p) => p.kind === 'git' && !p.hidden)
+      .map((p) => ({ id: p.id, name: p.name, hostId: p.hostId ?? 'local' }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }
+
+  async function readStartProjects(): Promise<Record<string, string>> {
+    const raw = await orca.storage.get(START_PROJECTS)
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+    const out: Record<string, string> = {}
+    for (const [key, value] of Object.entries(raw)) if (typeof value === 'string') out[key] = value
+    return out
+  }
+
+  orca.panels.handle('start.options', async (input, { signal }): Promise<StartOptionsResult> => {
+    const id = input?.id
+    if (typeof id !== 'number' || !Number.isInteger(id) || id <= 0) throw invalid('id must be a positive integer')
+    if (typeof input.locale !== 'string') throw invalid('locale must be a string')
+    const auth = await credentials()
+    if (!auth.ok) return auth
+    const org = `https://dev.azure.com/${encodeURIComponent(auth.organization)}`
+    const azure = request(
+      fetchImpl,
+      'GET',
+      `${org}/_apis/wit/workitems/${id}?fields=${START_FIELDS}&api-version=${API_VERSION}`,
+      undefined,
+      auth.pat,
+      signal
+    )
+    const orcaData = Promise.all([
+      gatherAgents().then(async (agents) => [agents, await gatherAgentKinds(agents)] as const),
+      gatherProjects()
+    ]).then(
+      (data) => ({ ok: true as const, data }),
+      (error: unknown) => ({ ok: false as const, error })
+    )
+    const [answer, gathered] = await Promise.all([azure, orcaData])
+    if (!answer.ok) {
+      logFailure('start', answer.error)
+      return answer
+    }
+    if (!gathered.ok) return startFailure(gathered.error)
+    const [[agents, agentKinds], projects] = gathered.data
+    const stored = await orca.storage.get(START_AGENT)
+    const lastAgent = typeof stored === 'string' && agentKinds.includes(stored) ? stored : ''
+
+    const fields = (answer.json as { fields?: Record<string, unknown> } | null)?.fields ?? {}
+    const text = (key: string) => (typeof fields[key] === 'string' ? (fields[key] as string) : '')
+    const title = text('System.Title')
+    const project = text('System.TeamProject')
+    const prompt = buildPrompt(
+      {
+        id,
+        type: text('System.WorkItemType'),
+        title,
+        url: workItemUrl(auth.organization, project, id),
+        organization: auth.organization,
+        project,
+        description: htmlToText(text('System.Description')),
+        acceptanceCriteria: htmlToText(text('Microsoft.VSTS.Common.AcceptanceCriteria')),
+        reproSteps: htmlToText(text('Microsoft.VSTS.TCM.ReproSteps'))
+      },
+      input.locale
+    )
+    const lastProjectId = project ? ((await readStartProjects())[project] ?? '') : ''
+    // The worktree name drops the leading [area] like the list does; the prompt keeps the full title.
+    const shortTitle = cleanTitle(title, text('System.AreaPath'))
+    return {
+      ok: true,
+      agents,
+      projects,
+      lastProjectId,
+      prompt,
+      workspaceName: workspaceNameFor(id, shortTitle),
+      agentKinds,
+      lastAgent
+    }
+  })
+
+  function parseTarget(value: unknown): StartTarget | null {
+    if (!value || typeof value !== 'object') return null
+    const t = value as Record<string, unknown>
+    if (t.kind === 'agent' && nonEmpty(t.terminalId)) return { kind: 'agent', terminalId: t.terminalId }
+    if (t.kind === 'worktree' && nonEmpty(t.projectId) && nonEmpty(t.hostId) && nonEmpty(t.name) && nonEmpty(t.agent)) {
+      return { kind: 'worktree', projectId: t.projectId, hostId: t.hostId, name: t.name, agent: t.agent }
+    }
+    return null
+  }
+
+  orca.panels.handle('start.run', async (input): Promise<StartResult> => {
+    const id = input?.id
+    if (typeof id !== 'number' || !Number.isInteger(id) || id <= 0) throw invalid('id must be a positive integer')
+    if (typeof input.project !== 'string') throw invalid('project must be a string')
+    if (!nonEmpty(input.prompt) || input.prompt.length > MAX_PROMPT) {
+      throw invalid(`prompt must be a non-empty string of at most ${MAX_PROMPT} characters`)
+    }
+    const target = parseTarget(input.target)
+    if (!target) throw invalid('target must be an agent with terminalId, or a worktree with projectId, hostId, name and agent')
+    const prompt = input.prompt
+    try {
+      if (target.kind === 'agent') {
+        const sent = await host('terminal.sendText', () =>
+          orca.host.call('terminal.sendText', { terminalId: target.terminalId, text: prompt, enter: true })
+        )
+        if (!sent.accepted) {
+          orca.log('start failed: orca (the terminal did not accept the text)')
+          return { ok: false, error: { kind: 'orca', detail: 'the terminal did not accept the text' } }
+        }
+        try {
+          await orca.host.call('terminal.focus', { terminalId: target.terminalId })
+        } catch {
+          // Showing the terminal is a courtesy: the prompt was sent.
+        }
+        return { ok: true }
+      }
+      await host('workspace.create', () =>
+        orca.host.call('workspace.create', {
+          projectId: target.projectId,
+          hostId: target.hostId,
+          name: target.name,
+          agent: target.agent,
+          prompt,
+          open: true
+        })
+      )
+      await orca.storage.set(START_AGENT, target.agent)
+      if (input.project) {
+        const map = await readStartProjects()
+        await orca.storage.set(START_PROJECTS, { ...map, [input.project]: target.projectId })
+      }
+      return { ok: true }
+    } catch (error) {
+      return startFailure(error)
+    }
   })
 
   // Every field is checked before anything is written, so a refused call changes nothing. An
