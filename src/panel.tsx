@@ -488,8 +488,11 @@ type BoardPick = { project: Project | null; team: Team | null; board: BoardSumma
 /** What the config screen edits until Save; the PAT and the grouping are not part of it. */
 type Draft = Pick<ConfigView, 'allProjects' | 'projects' | 'stripAreaPrefix' | 'refreshMinutes' | 'board'>
 
-/** Two calls of up to 20 s each in the worker, plus margin. */
-const REQUEST_TIMEOUT_MS = 60_000
+/**
+ * The most Orca allows. The board's longest chain is five calls in a row in the worker (the board
+ * and team settings, WIQL, fields, relations, children), each of up to 20 s.
+ */
+const REQUEST_TIMEOUT_MS = 120_000
 /** How often the panel checks whether the data is due an automatic refresh. */
 const REFRESH_CHECK_MS = 30_000
 const REFRESH_CHOICES = [0, 5, 15, 30] as const
@@ -661,8 +664,14 @@ function showBoard(result: BoardResult): void {
   }
 }
 
+/** A load asked for while the tab was already loading; it runs when that one ends. */
+const reloadPending: Record<TabId, boolean> = { assigned: false, board: false }
+
 async function loadAssigned(): Promise<void> {
-  if (read(assignedBusy)) return
+  if (read(assignedBusy)) {
+    reloadPending.assigned = true
+    return
+  }
   set(assignedBusy, true)
   set(notice, null)
   if (read(assignedState).kind !== 'list') set(assignedState, { kind: 'loading' })
@@ -673,10 +682,17 @@ async function loadAssigned(): Promise<void> {
   } finally {
     set(assignedBusy, false)
   }
+  if (reloadPending.assigned) {
+    reloadPending.assigned = false
+    await loadAssigned()
+  }
 }
 
 async function loadBoard(): Promise<void> {
-  if (read(boardBusy)) return
+  if (read(boardBusy)) {
+    reloadPending.board = true
+    return
+  }
   set(boardBusy, true)
   set(notice, null)
   if (read(boardState).kind !== 'ready') set(boardState, { kind: 'loading' })
@@ -686,6 +702,10 @@ async function loadBoard(): Promise<void> {
     showBoard(failure(error))
   } finally {
     set(boardBusy, false)
+  }
+  if (reloadPending.board) {
+    reloadPending.board = false
+    await loadBoard()
   }
 }
 
@@ -1091,9 +1111,9 @@ export function setup(ctx: PanelContext): void {
       const before = read(config)
       set(config, view)
       const active = read(activeTab)
-      const running = read(active === 'board' ? boardBusy : assignedBusy)
-      // On the config screen, or while a call runs, Save or that call shows the result.
-      if (read(screen).kind === 'config' || read(busy) || running) {
+      // On the config screen, or while Save or Connect runs, that call shows the result. A tab
+      // that is loading reloads once its load ends (its load read the settings before).
+      if (read(screen).kind === 'config' || read(busy)) {
         ensureProjects()
         return
       }
@@ -1145,8 +1165,14 @@ function fold(text: string): string {
   return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
 }
 
+/**
+ * By id; by name only for an entry of the fallback list, whose id is its name, so two projects
+ * named alike (`Operações`, `Operacoes`) stay apart.
+ */
 function sameProject(a: Project, b: Project): boolean {
-  return a.id === b.id || fold(a.name) === fold(b.name)
+  if (a.id === b.id) return true
+  const fallback = a.id === a.name || b.id === b.name
+  return fallback && fold(a.name) === fold(b.name)
 }
 
 function ProjectPicker() {

@@ -89,7 +89,13 @@ export function parseOrganization(raw: string): string | null {
   if (url.protocol !== 'https:' || url.username || url.password) return null
   const host = url.hostname.toLowerCase()
   let name: string | undefined
-  if (host === 'dev.azure.com') name = decodeURIComponent(url.pathname.split('/')[1] ?? '')
+  if (host === 'dev.azure.com') {
+    try {
+      name = decodeURIComponent(url.pathname.split('/')[1] ?? '')
+    } catch {
+      return null
+    }
+  }
   else if (host.endsWith('.visualstudio.com')) name = host.slice(0, -'.visualstudio.com'.length)
   return name && ORGANIZATION.test(name) ? name : null
 }

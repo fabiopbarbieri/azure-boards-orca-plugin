@@ -54,6 +54,8 @@ test('reads the organization from a name or a URL', () => {
   assert.equal(parseOrganization('-bad'), null)
   assert.equal(parseOrganization('has space'), null)
   assert.equal(parseOrganization(''), null)
+  // A bad percent escape is not an organization, not a crash.
+  assert.equal(parseOrganization('dev.azure.com/%E0'), null)
 })
 
 test('parses the hidden states setting', () => {

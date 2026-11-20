@@ -1059,3 +1059,102 @@ test('start.options: without history the open agents come first, then the usual 
   assert.equal(fallback.lastAgent, '')
   await bare.deactivate()
 })
+
+// ---- review fixes ----
+
+test('prefs.set keeps the stored name of a renamed project the panel still knows by its old name', async () => {
+  const host = mockHost({
+    settings: { organization: 'contoso' },
+    secrets: { pat: STORED },
+    storage: { projects: { all: false, selected: [{ id: 'g1', name: 'New name' }] } },
+    results: keyring
+  })
+  const worker = await mountWorker(main, { host })
+  await worker.request('prefs.set', {
+    allProjects: false,
+    projects: [
+      { id: 'g1', name: 'Old name' },
+      { id: 'g2', name: 'Api' }
+    ]
+  })
+  assert.deepEqual(host.data().storage.projects, {
+    all: false,
+    selected: [
+      { id: 'g1', name: 'New name' },
+      { id: 'g2', name: 'Api' }
+    ]
+  })
+  await worker.deactivate()
+})
+
+test('reconnecting to an organization stored as a URL keeps the project filter and the board', async () => {
+  useRoutes(['/_apis/wit/wiql', wiql()])
+  const filter = { all: false, selected: [{ id: 'g1', name: 'Web' }] }
+  const host = mockHost({
+    settings: { organization: 'https://dev.azure.com/contoso' },
+    storage: { projects: filter, board: BOARD_REF },
+    secrets: { pat: STORED },
+    results: keyring
+  })
+  const worker = await mountWorker(main, { host })
+  assert.ok((await worker.request('config.save', { organization: 'contoso', pat: 'another-fake-pat' })).ok)
+  assert.deepEqual(host.data().storage.projects, filter)
+  assert.deepEqual(host.data().storage.board, BOARD_REF)
+  await worker.deactivate()
+})
+
+test('a new PAT forgets who "me" is on the board', async () => {
+  useRoutes(...boardRoutes())
+  const host = mockHost({
+    settings: { organization: 'contoso' },
+    storage: { board: BOARD_REF },
+    secrets: { pat: STORED },
+    results: keyring
+  })
+  const worker = await mountWorker(main, { host })
+  const first = await worker.request('board.get')
+  assert.ok(first.ok && first.items[0]!.mine)
+  // Another person's PAT: connectionData now names someone else.
+  const fetch = useRoutes(['/_apis/connectionData', connectionData('other')], ...boardRoutes())
+  assert.ok((await worker.request('config.save', { organization: 'contoso', pat: 'another-fake-pat' })).ok)
+  const second = await worker.request('board.get')
+  assert.ok(second.ok && !second.items[0]!.mine)
+  assert.ok(fetch.calls.some((c) => c.url.includes('/_apis/connectionData')))
+  await worker.deactivate()
+})
+
+test('start.options skips a workspace whose agents cannot be read', async () => {
+  useRoutes(['/_apis/wit/workitems/42', itemAnswer])
+  const host = startHost({
+    'agents.list': (p: { workspaceId: string }) => {
+      if (p.workspaceId === 'w1') throw hostError('action_failed', 'no such workspace')
+      return agentsByWorkspace[p.workspaceId] ?? { agents: [] }
+    }
+  })
+  const worker = await mountWorker(main, { host })
+  const result = await worker.request('start.options', { id: 42, locale: 'en' })
+  assert.ok(result.ok)
+  assert.deepEqual(result.agents.map((a) => a.terminalId), ['t2'])
+  assert.ok(worker.logs.some((l) => l.includes('skipped a workspace')))
+  await worker.deactivate()
+})
+
+test('start.run: a worktree that was created is a success even if remembering the choice fails', async () => {
+  const host = startHost({
+    'workspace.create': { workspaceId: 'w9', terminalId: 't9' },
+    'storage.set': () => {
+      throw hostError('action_failed', 'disk full')
+    }
+  })
+  const worker = await mountWorker(main, { host })
+  const result = await worker.request('start.run', {
+    id: 1,
+    project: 'Web',
+    prompt: 'p',
+    target: { kind: 'worktree', projectId: 'p1', hostId: 'local', name: 'n', agent: 'claude' }
+  })
+  assert.deepEqual(result, { ok: true })
+  assert.equal(worker.host.callsOf('workspace.create').length, 1)
+  assert.ok(worker.logs.some((l) => l.includes('could not remember')))
+  await worker.deactivate()
+})

@@ -371,6 +371,10 @@ export default function activate(orca: OrcaWorkerApi): void {
     return { ok: false, error: result }
   }
 
+  async function listAgents(workspaceId: string) {
+    return (await host('agents.list', () => orca.host.call('agents.list', { workspaceId }))).agents
+  }
+
   async function gatherAgents(): Promise<OpenAgent[]> {
     const { workspaces } = await host('workspace.list', () => orca.host.call('workspace.list', { includeStatus: true }))
     const withTerminals = workspaces
@@ -378,7 +382,16 @@ export default function activate(orca: OrcaWorkerApi): void {
       .slice(0, MAX_AGENT_WORKSPACES)
     const lists = await Promise.all(
       withTerminals.map(async (w) => {
-        const { agents } = await host('agents.list', () => orca.host.call('agents.list', { workspaceId: w.id }))
+        let agents: Awaited<ReturnType<typeof listAgents>>
+        try {
+          agents = await listAgents(w.id)
+        } catch (error) {
+          // A missing capability concerns every workspace; any other failure (a workspace removed
+          // meanwhile, an SSH host offline) only skips this one.
+          if (error instanceof HostCallError && orcaError(error.method, error.cause).kind === 'capability') throw error
+          orca.log('start: skipped a workspace whose agents could not be read')
+          return []
+        }
         return agents.flatMap((a): OpenAgent[] =>
           a.terminalId
             ? [
@@ -548,10 +561,16 @@ export default function activate(orca: OrcaWorkerApi): void {
           open: true
         })
       )
-      await orca.storage.set(START_AGENT, target.agent)
-      if (input.project) {
-        const map = await readStartProjects()
-        await orca.storage.set(START_PROJECTS, { ...map, [input.project]: target.projectId })
+      // The worktree exists now: remembering the choices must not turn this into a failure, or a
+      // retry would create a second one.
+      try {
+        await orca.storage.set(START_AGENT, target.agent)
+        if (input.project) {
+          const map = await readStartProjects()
+          await orca.storage.set(START_PROJECTS, { ...map, [input.project]: target.projectId })
+        }
+      } catch {
+        orca.log('start: could not remember the agent and project')
       }
       return { ok: true }
     } catch (error) {
@@ -585,9 +604,15 @@ export default function activate(orca: OrcaWorkerApi): void {
     else if (prefs.board !== undefined) await orca.storage.set(BOARD, cleanBoard(prefs.board)!)
     if (prefs.allProjects !== undefined || prefs.projects !== undefined) {
       const current = await readProjects()
+      // The stored name wins for a project already stored: projects.list renames it there, and
+      // the panel's draft may still hold the name from before.
+      const stored = new Map(current.selected.map((p) => [p.id, p.name]))
       await writeProjects({
         all: prefs.allProjects ?? current.all,
-        selected: prefs.projects !== undefined ? cleanProjects(prefs.projects) : current.selected
+        selected:
+          prefs.projects !== undefined
+            ? cleanProjects(prefs.projects).map((p) => ({ id: p.id, name: stored.get(p.id) ?? p.name }))
+            : current.selected
       })
     }
     const current = await readSettings()
@@ -617,7 +642,7 @@ export default function activate(orca: OrcaWorkerApi): void {
     if (newPat && (await protection()) === 'unavailable') return fail('secretsUnavailable')
 
     // The project filter belongs to one organization: another one starts from every project.
-    const sameOrganization = organization.toLowerCase() === current.organization.toLowerCase()
+    const sameOrganization = organization.toLowerCase() === (parseOrganization(current.organization) ?? '').toLowerCase()
     const filter: ProjectFilter = sameOrganization ? await readProjects() : { all: true, selected: [] }
 
     // Nothing is saved until Azure DevOps accepts the values.
@@ -631,8 +656,9 @@ export default function activate(orca: OrcaWorkerApi): void {
       } catch {
         return fail('secretsUnavailable')
       }
-      // A new PAT may have other scopes: forget the failures remembered with the old one.
+      // A new PAT may have other scopes and another owner: forget what was learned with the old one.
       cache.clear()
+      meCache.clear()
     }
     if (!sameOrganization) {
       await writeProjects(filter)
@@ -648,6 +674,7 @@ export default function activate(orca: OrcaWorkerApi): void {
 
   orca.panels.handle('pat.clear', async () => {
     await orca.secrets.delete(PAT)
+    meCache.clear()
     return changed()
   })
 

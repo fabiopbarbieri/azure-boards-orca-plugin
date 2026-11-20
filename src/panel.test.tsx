@@ -1415,3 +1415,21 @@ test('start: an agent is named by its Orca project, or by its workspace outside 
   clean(view, host)
   await view.unmount()
 })
+
+test('projects: two projects named alike stay apart', async () => {
+  const accented: Project = { id: 'p-acc', name: 'Operações' }
+  const plain: Project = { id: 'p-plain', name: 'Operacoes' }
+  const w = worker({ ...configured, allProjects: false, projects: [accented] }, listed(), {
+    'projects.list': { ok: true, projects: [accented, plain], complete: true }
+  })
+  const host = mockHost({ requests: w.requests })
+  const view = await mount(panel, { host })
+  await openSettings(view)
+  assert.equal(view.valueOf({ type: 'Checkbox', label: 'Operações' }), true)
+  assert.equal(view.valueOf({ type: 'Checkbox', label: 'Operacoes' }), false)
+  await view.toggle({ type: 'Checkbox', label: 'Operacoes' })
+  await view.press({ text: 'Save' })
+  assert.deepEqual((w.state.prefs[0] as Prefs).projects, [accented, plain])
+  clean(view, host)
+  await view.unmount()
+})
