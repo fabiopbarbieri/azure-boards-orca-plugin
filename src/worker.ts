@@ -46,7 +46,7 @@ const PROJECTS = 'projects'
 const BOARD = 'board'
 const START_PROJECTS = 'startProjects'
 const START_AGENT = 'startAgent'
-/** Offered for a new worktree when Orca knows no agent yet. */
+/** Always offered for a new worktree, after the kinds the person has used. */
 const DEFAULT_AGENT_KINDS = ['claude', 'codex', 'kiro', 'gemini']
 const MAX_SESSIONS = 200
 const MAX_AGENT_WORKSPACES = 40
@@ -402,8 +402,9 @@ export default function activate(orca: OrcaWorkerApi): void {
   }
 
   /**
-   * The agent kinds the person uses: from Orca's session history (newest first), then the open
-   * agents. The history is a nicety: when it cannot be read, the open agents and defaults remain.
+   * The agent kinds to offer: from Orca's session history (newest first), then the open agents,
+   * then the usual ones (an agent turned on in Orca but never used shows no other way). The
+   * history is a nicety: when it cannot be read, the rest remains.
    */
   async function gatherAgentKinds(open: readonly OpenAgent[]): Promise<string[]> {
     let sessions: { agent: string }[] = []
@@ -414,11 +415,11 @@ export default function activate(orca: OrcaWorkerApi): void {
       orca.log(`start: agent session history unavailable (${String(reason)})`)
     }
     const kinds: string[] = []
-    for (const kind of [...sessions.map((s) => s.agent), ...open.map((a) => a.agent)]) {
+    for (const kind of [...sessions.map((s) => s.agent), ...open.map((a) => a.agent), ...DEFAULT_AGENT_KINDS]) {
       const name = typeof kind === 'string' ? kind.trim() : ''
       if (name && !kinds.includes(name)) kinds.push(name)
     }
-    return kinds.length > 0 ? kinds : [...DEFAULT_AGENT_KINDS]
+    return kinds
   }
 
   async function gatherProjects(): Promise<OrcaProject[]> {

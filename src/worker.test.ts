@@ -866,8 +866,8 @@ test('start.options gathers agents and projects and builds the prompt', async ()
   ])
   assert.equal(result.lastProjectId, 'p2')
   assert.equal(result.workspaceName, 'wi-42-corrigir-acao-do-login')
-  // History first (newest first, once each), then the open agents' kinds.
-  assert.deepEqual(result.agentKinds, ['codex', 'claude'])
+  // History first (newest first, once each), then the open agents' kinds, then the usual ones.
+  assert.deepEqual(result.agentKinds, ['codex', 'claude', 'kiro', 'gemini'])
   assert.equal(result.lastAgent, '')
   assert.ok(result.prompt.includes('#42'))
   assert.ok(result.prompt.includes('https://dev.azure.com/contoso/Web/_workitems/edit/42'))
@@ -1030,7 +1030,7 @@ test('start.run refuses invalid input with invalid_params and calls nothing', as
   await worker.deactivate()
 })
 
-test('start.options: agent kinds fall back to the open agents, then to defaults; the last agent is remembered', async () => {
+test('start.options: without history the open agents come first, then the usual ones; the last agent is remembered', async () => {
   useRoutes(['/_apis/wit/workitems/42', itemAnswer])
   const noHistory = startHost(
     {
@@ -1043,7 +1043,7 @@ test('start.options: agent kinds fall back to the open agents, then to defaults;
   const worker = await mountWorker(main, { host: noHistory })
   const result = await worker.request('start.options', { id: 42, locale: 'en-US' })
   assert.ok(result.ok)
-  assert.deepEqual(result.agentKinds, ['claude'])
+  assert.deepEqual(result.agentKinds, ['claude', 'codex', 'kiro', 'gemini'])
   assert.equal(result.lastAgent, 'claude')
   await worker.deactivate()
 

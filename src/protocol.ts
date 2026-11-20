@@ -127,8 +127,8 @@ export type StartOptionsResult =
       workspaceName: string
       /**
        * The agent kinds to offer for a new worktree, such as `claude`, `codex` or `kiro`: the ones
-       * open now and in Orca's agent session history, most recent first (a short default list when
-       * none is known).
+       * in Orca's agent session history (most recent first) and open now, then a short list of the
+       * usual ones.
        */
       agentKinds: string[]
       /** The agent last used for a new worktree from this plugin; '' when none yet. */
