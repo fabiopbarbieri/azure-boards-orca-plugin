@@ -1,5 +1,7 @@
 # Azure Boards for Orca
 
+![Azure Boards for Orca: the team board and the Start work form in Orca's sidebar](assets/cover.png)
+
 Your Azure Boards work items in [Orca](https://github.com/stablyai/orca)'s sidebar: see what is assigned to you and your team's board, move items, and hand one to a coding agent with a ready prompt.
 
 Azure DevOps Services (`https://dev.azure.com/<organization>`) only. It needs no Azure Repos: your code can live anywhere. Works on Linux and Windows.

@@ -3,13 +3,43 @@
   "id": "azure-boards",
   "publisher": "fabiopbarbieri",
   "name": "Azure Boards",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Your Azure Boards work items (Azure DevOps Services) in Orca: what is assigned to you and your team's board. Search, move items between states and columns, and start work on one with a coding agent.",
   "license": "MIT",
   "author": {
     "name": "fabiopbarbieri"
   },
   "repository": "https://github.com/fabiopbarbieri/azure-boards-orca-plugin",
+  "cover": {
+    "path": "assets/cover.png",
+    "alt": "Azure Boards for Orca: the team board and the Start work form in Orca's sidebar"
+  },
+  "screenshots": [
+    {
+      "path": "assets/screenshots/01-assigned.png",
+      "alt": "Assigned to me: work items grouped by state, with type icons, task progress and pull requests"
+    },
+    {
+      "path": "assets/screenshots/02-board.png",
+      "alt": "Board: the team's current sprint in its own columns, with WIP limits and Doing/Done halves"
+    },
+    {
+      "path": "assets/screenshots/03-item.png",
+      "alt": "Item actions: open in the browser, Start work and Move to"
+    },
+    {
+      "path": "assets/screenshots/04-start.png",
+      "alt": "Start work: sending a ready prompt about the work item to an open coding agent"
+    },
+    {
+      "path": "assets/screenshots/05-search.png",
+      "alt": "Search: filtering the items by part of the title"
+    },
+    {
+      "path": "assets/screenshots/06-config.png",
+      "alt": "Settings: connection, projects, board, display and refresh sections"
+    }
+  ],
   "engines": {
     "orca": ">=1.4.264"
   },
