@@ -205,6 +205,14 @@ orca plugin logs fabiopbarbieri.azure-boards
 
 The panel (`src/panel.tsx`) and the worker (`src/worker.ts`) share one contract, `src/protocol.ts`. Azure DevOps calls live in pure modules (`azure.ts`, `board.ts`, `move.ts`) that take `fetch` as an argument, so tests mock it and never reach the network.
 
+### Releasing
+
+1. Bump `version` in `orca-plugin.json` and commit.
+2. Tag the commit `vX.Y.Z` (same version) and push the branch and the tag.
+3. `orca plugin install fabiopbarbieri/azure-boards-orca-plugin` installs the newest tag. The [community catalog](https://orca.dev/plugins/fabiopbarbieri/azure-boards-orca-plugin) picks the tag up on its next sync, because the repository has the `orca-plugin` topic. Notes from the catalog's checks show on that page.
+
+A dev-loaded copy and an installed copy share the plugin id, so they also share settings, the stored PAT and storage.
+
 ## License
 
 [MIT](LICENSE)
