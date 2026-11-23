@@ -83,7 +83,7 @@ test('reports the config without the PAT', async () => {
     hideClosed: 'off',
     hiddenStates: ['Closed', 'Done'],
     refreshMinutes: 5,
-    board: null
+    boards: []
   })
   assertNoLeak(worker, view)
   assert.deepEqual(worker.refusals, [])
@@ -104,7 +104,7 @@ test('config.get defaults: every project, grouped by state, area prefix stripped
     hideClosed: 'off',
     hiddenStates: [],
     refreshMinutes: 5,
-    board: null
+    boards: []
   })
   await worker.deactivate()
 })
@@ -179,7 +179,7 @@ test('saves the organization and PAT only after Azure DevOps accepts them', asyn
     hideClosed: 'off',
     hiddenStates: [],
     refreshMinutes: 5,
-    board: null
+    boards: []
   })
   assertNoLeak(worker, result)
   await worker.deactivate()
@@ -358,7 +358,7 @@ test('prefs.set stores the projects and the preferences, and posts the new view'
     hideClosed: 'off',
     hiddenStates: [],
     refreshMinutes: 5,
-    board: null
+    boards: []
   })
   const data = host.data()
   assert.deepEqual(data.storage.projects, {
@@ -561,6 +561,8 @@ const BOARD_REF = {
   boardId: 'b1',
   boardName: 'Stories'
 }
+const TEAM = { teamId: 't-1' }
+const OTHER_REF = { ...BOARD_REF, projectId: 'p-2', projectName: 'Other', teamId: 't-2', teamName: 'Team B', boardId: 'b2' }
 
 function boardRoutes(...extra: Route[]): Route[] {
   return [
@@ -576,54 +578,81 @@ function boardRoutes(...extra: Route[]): Route[] {
   ]
 }
 
-test('board.get without a stored board asks nothing, and without a PAT asks for setup', async () => {
+test('board.get without that board asks nothing, and without a PAT asks for setup', async () => {
   const fetch = useRoutes()
   const host = mockHost({ settings: { organization: 'contoso' }, secrets: { pat: STORED } })
   const worker = await mountWorker(main, { host })
-  assert.deepEqual(await worker.request('board.get'), { ok: false, error: { kind: 'boardNotConfigured' } })
-  assert.equal(fetch.calls.length, 0)
+  assert.deepEqual(await worker.request('board.get', TEAM), { ok: false, error: { kind: 'boardNotConfigured' } })
   await worker.deactivate()
+  // Another team is registered, not this one (removed in another window).
+  const others = mockHost({ settings: { organization: 'contoso' }, secrets: { pat: STORED }, storage: { boards: [OTHER_REF] } })
+  const w1 = await mountWorker(main, { host: others })
+  assert.deepEqual(await w1.request('board.get', TEAM), { ok: false, error: { kind: 'boardNotConfigured' } })
+  await assert.rejects(
+    () => w1.request('board.get', { teamId: '' }),
+    (error: unknown) => (error as { code?: string }).code === 'invalid_params'
+  )
+  assert.equal(fetch.calls.length, 0)
+  await w1.deactivate()
 
-  const bare = mockHost({ settings: { organization: 'contoso' }, storage: { board: BOARD_REF } })
+  const bare = mockHost({ settings: { organization: 'contoso' }, storage: { boards: [BOARD_REF] } })
   const w2 = await mountWorker(main, { host: bare })
-  assert.deepEqual(await w2.request('board.get'), { ok: false, error: { kind: 'notConfigured' } })
+  assert.deepEqual(await w2.request('board.get', TEAM), { ok: false, error: { kind: 'notConfigured' } })
   assert.equal(fetch.calls.length, 0)
   await w2.deactivate()
 })
 
-test('board.get answers the stored board, logs failures without the PAT', async () => {
+test('board.get answers the registered board of the team, logs failures without the PAT', async () => {
   const fetch = useRoutes(...boardRoutes())
-  const host = mockHost({ settings: { organization: 'contoso' }, secrets: { pat: STORED }, storage: { board: BOARD_REF } })
+  const host = mockHost({ settings: { organization: 'contoso' }, secrets: { pat: STORED }, storage: { boards: [OTHER_REF, BOARD_REF] } })
   const worker = await mountWorker(main, { host })
-  const result = await worker.request('board.get')
+  const result = await worker.request('board.get', TEAM)
   assert.ok(result.ok)
   assert.deepEqual(result.board, BOARD_REF)
   assert.deepEqual(result.items.map((i) => [i.id, i.boardColumn, i.assignedTo, i.mine]), [[1, 'New', 'Me', true]])
   assert.deepEqual(result.columns.map((c) => c.name), ['New', 'Done'])
   assert.ok(fetch.calls.every((c) => c.url.startsWith('https://dev.azure.com/contoso/')))
   assertNoLeak(worker, result)
-  await worker.request('board.get')
+  await worker.request('board.get', TEAM)
   assert.equal(fetch.calls.filter((c) => c.url.includes('connectionData')).length, 1)
   await worker.deactivate()
 
   useRoutes(...boardRoutes(['/work/boards/b1', json({ message: `no ${FAKE_PAT}` }, 500)]))
-  const w2 = await mountWorker(main, { host: mockHost({ settings: { organization: 'contoso' }, secrets: { pat: STORED }, storage: { board: BOARD_REF } }) })
-  const failed = await w2.request('board.get')
+  const w2 = await mountWorker(main, { host: mockHost({ settings: { organization: 'contoso' }, secrets: { pat: STORED }, storage: { boards: [BOARD_REF] } }) })
+  const failed = await w2.request('board.get', TEAM)
   assert.ok(!failed.ok && failed.error.kind === 'server')
   assert.ok(w2.logs.length > 0)
   assertNoLeak(w2, failed)
   await w2.deactivate()
 })
 
-test('a malformed stored board reads as none', async () => {
+test('malformed and repeated stored boards are left out', async () => {
   const host = mockHost({
     settings: { organization: 'contoso' },
     secrets: { pat: STORED },
-    storage: { board: { ...BOARD_REF, boardId: '' } },
+    storage: { boards: [{ ...BOARD_REF, boardId: '' }, OTHER_REF, 'x', { ...OTHER_REF, boardId: 'b9' }] },
     results: keyring
   })
   const worker = await mountWorker(main, { host })
-  assert.equal((await worker.request('config.get')).board, null)
+  assert.deepEqual((await worker.request('config.get')).boards, [OTHER_REF])
+  await worker.deactivate()
+  const legacy = mockHost({ settings: { organization: 'contoso' }, storage: { board: { ...BOARD_REF, boardId: '' } }, results: keyring })
+  const w2 = await mountWorker(main, { host: legacy })
+  assert.deepEqual((await w2.request('config.get')).boards, [])
+  await w2.deactivate()
+})
+
+test('the single board of earlier versions reads as the one registered board, until the first write', async () => {
+  useRoutes(...boardRoutes())
+  const host = mockHost({ settings: { organization: 'contoso' }, secrets: { pat: STORED }, storage: { board: BOARD_REF }, results: keyring })
+  const worker = await mountWorker(main, { host })
+  assert.deepEqual((await worker.request('config.get')).boards, [BOARD_REF])
+  assert.ok((await worker.request('board.get', TEAM)).ok)
+  // Removing the last board stores none, and the old one does not come back.
+  assert.deepEqual((await worker.request('prefs.set', { boards: [] })).boards, [])
+  assert.deepEqual(host.data().storage.boards, [])
+  assert.equal(host.data().storage.board, undefined)
+  assert.deepEqual((await worker.request('config.get')).boards, [])
   await worker.deactivate()
 })
 
@@ -650,9 +679,9 @@ test('teams.list and boards.list use the stored PAT only for the stored organiza
   const other = await mountWorker(main, { host: mockHost({ settings: { organization: 'fabrikam' }, secrets: { pat: STORED } }) })
   assert.deepEqual(await other.request('teams.list', { projectId: 'p-1' }), { ok: false, error: { kind: 'notConfigured' } })
   assert.deepEqual(await other.request('boards.list', { projectId: 'p-1', teamId: 't' }), { ok: false, error: { kind: 'notConfigured' } })
-  const stored = mockHost({ settings: { organization: 'fabrikam' }, secrets: { pat: STORED }, storage: { board: BOARD_REF } })
+  const stored = mockHost({ settings: { organization: 'fabrikam' }, secrets: { pat: STORED }, storage: { boards: [BOARD_REF] } })
   const w3 = await mountWorker(main, { host: stored })
-  assert.deepEqual(await w3.request('board.get'), { ok: false, error: { kind: 'notConfigured' } })
+  assert.deepEqual(await w3.request('board.get', TEAM), { ok: false, error: { kind: 'notConfigured' } })
   assert.equal(fetch.calls.length, before)
   await other.deactivate()
   await w3.deactivate()
@@ -667,41 +696,50 @@ test('teams.list maps a 403 to scope', async () => {
   await worker.deactivate()
 })
 
-test('prefs.set stores, clears and validates the board', async () => {
+test('prefs.set stores, empties and validates the boards', async () => {
   const host = mockHost({ settings: { organization: 'contoso' }, secrets: { pat: STORED }, results: keyring })
   const worker = await mountWorker(main, { host })
-  const set = await worker.request('prefs.set', { board: { ...BOARD_REF, boardName: ' Stories ', extra: 1 } as never })
-  assert.deepEqual(set.board, BOARD_REF)
-  assert.deepEqual(host.data().storage.board, BOARD_REF)
+  const set = await worker.request('prefs.set', { boards: [{ ...BOARD_REF, boardName: ' Stories ', extra: 1 }, OTHER_REF] as never })
+  assert.deepEqual(set.boards, [BOARD_REF, OTHER_REF])
+  assert.deepEqual(host.data().storage.boards, [BOARD_REF, OTHER_REF])
   assert.deepEqual(worker.posts.filter((p) => p.event === 'config.changed').at(-1)!.payload, set)
-  for (const bad of [{ ...BOARD_REF, teamId: '' }, { ...BOARD_REF, teamName: 3 }, 'x', { projectId: 'p' }]) {
+  for (const bad of [
+    [{ ...BOARD_REF, teamId: '' }],
+    [{ ...BOARD_REF, teamName: 3 }],
+    ['x'],
+    [{ projectId: 'p' }],
+    BOARD_REF,
+    null,
+    [BOARD_REF, { ...BOARD_REF, boardId: 'b2' }]
+  ]) {
     await assert.rejects(
-      () => worker.request('prefs.set', { board: bad } as never),
+      () => worker.request('prefs.set', { boards: bad } as never),
       (error: unknown) => (error as { code?: string }).code === 'invalid_params'
     )
   }
-  assert.deepEqual(host.data().storage.board, BOARD_REF)
-  // Other prefs leave it alone; null clears it.
-  assert.deepEqual((await worker.request('prefs.set', { groupBy: 'none' })).board, BOARD_REF)
-  assert.equal((await worker.request('prefs.set', { board: null })).board, null)
-  assert.equal(host.data().storage.board, undefined)
+  assert.deepEqual(host.data().storage.boards, [BOARD_REF, OTHER_REF])
+  // Other prefs leave them alone; [] removes every board.
+  assert.deepEqual((await worker.request('prefs.set', { groupBy: 'none' })).boards, [BOARD_REF, OTHER_REF])
+  assert.deepEqual((await worker.request('prefs.set', { boards: [] })).boards, [])
+  assert.deepEqual(host.data().storage.boards, [])
   await worker.deactivate()
 })
 
-test('saving another organization clears the board, the same one keeps it', async () => {
+test('saving another organization clears the boards (and the legacy board), the same one keeps them', async () => {
   useRoutes(['/_apis/wit/wiql', wiql()])
   const host = mockHost({
     settings: { organization: 'contoso' },
     secrets: { pat: STORED },
-    storage: { board: BOARD_REF },
+    storage: { boards: [BOARD_REF, OTHER_REF], board: BOARD_REF },
     results: keyring
   })
   const worker = await mountWorker(main, { host })
   assert.ok((await worker.request('config.save', { organization: 'Contoso' })).ok)
-  assert.deepEqual(host.data().storage.board, BOARD_REF)
+  assert.deepEqual(host.data().storage.boards, [BOARD_REF, OTHER_REF])
   assert.ok((await worker.request('config.save', { organization: 'fabrikam', pat: FAKE_PAT })).ok)
+  assert.deepEqual(host.data().storage.boards, [])
   assert.equal(host.data().storage.board, undefined)
-  assert.equal((await worker.request('config.get')).board, null)
+  assert.deepEqual((await worker.request('config.get')).boards, [])
   await worker.deactivate()
 })
 
@@ -723,15 +761,15 @@ test('item.move to a state PATCHes the item', async () => {
   await worker.deactivate()
 })
 
-test('item.move to a column uses the stored board', async () => {
+test('item.move to a column uses the registered board of the target team', async () => {
   const fetch = useRoutes(
     ['/work/boards/b1', MOVE_BOARD],
     ['/_apis/wit/workitems/5?fields=', json({ id: 5, fields: { 'System.WorkItemType': 'Task' } })],
     [isPatch, json({ id: 5 })]
   )
-  const host = mockHost({ settings: { organization: 'contoso' }, secrets: { pat: STORED }, storage: { board: BOARD_REF } })
+  const host = mockHost({ settings: { organization: 'contoso' }, secrets: { pat: STORED }, storage: { boards: [OTHER_REF, BOARD_REF] } })
   const worker = await mountWorker(main, { host })
-  const result = await worker.request('item.move', { id: 5, target: { kind: 'column', columnId: 'c1', done: true } })
+  const result = await worker.request('item.move', { id: 5, target: { kind: 'column', teamId: 't-1', columnId: 'c1', done: true } })
   assert.deepEqual(result, { ok: true })
   assert.deepEqual(fetch.calls.find(isPatch)!.body, [
     { op: 'add', path: '/fields/WEF_1_Kanban.Column', value: 'Doing' },
@@ -743,10 +781,13 @@ test('item.move to a column uses the stored board', async () => {
 
 test('item.move without a board, or without credentials, asks nothing', async () => {
   const fetch = useRoutes()
-  const column = { id: 5, target: { kind: 'column', columnId: 'c1', done: false } } as const
+  const column = { id: 5, target: { kind: 'column', teamId: 't-1', columnId: 'c1', done: false } } as const
   const worker = await mountWorker(main, { host: mockHost({ settings: { organization: 'contoso' }, secrets: { pat: STORED } }) })
   assert.deepEqual(await worker.request('item.move', column), { ok: false, error: { kind: 'boardNotConfigured' } })
   await worker.deactivate()
+  const others = await mountWorker(main, { host: mockHost({ settings: { organization: 'contoso' }, secrets: { pat: STORED }, storage: { boards: [OTHER_REF] } }) })
+  assert.deepEqual(await others.request('item.move', column), { ok: false, error: { kind: 'boardNotConfigured' } })
+  await others.deactivate()
   const bare = await mountWorker(main, { host: mockHost({ settings: { organization: 'contoso' } }) })
   assert.deepEqual(await bare.request('item.move', column), { ok: false, error: { kind: 'notConfigured' } })
   await bare.deactivate()
@@ -1096,19 +1137,19 @@ test('prefs.set keeps the stored name of a renamed project the panel still knows
   await worker.deactivate()
 })
 
-test('reconnecting to an organization stored as a URL keeps the project filter and the board', async () => {
+test('reconnecting to an organization stored as a URL keeps the project filter and the boards', async () => {
   useRoutes(['/_apis/wit/wiql', wiql()])
   const filter = { all: false, selected: [{ id: 'g1', name: 'Web' }] }
   const host = mockHost({
     settings: { organization: 'https://dev.azure.com/contoso' },
-    storage: { projects: filter, board: BOARD_REF },
+    storage: { projects: filter, boards: [BOARD_REF] },
     secrets: { pat: STORED },
     results: keyring
   })
   const worker = await mountWorker(main, { host })
   assert.ok((await worker.request('config.save', { organization: 'contoso', pat: 'another-fake-pat' })).ok)
   assert.deepEqual(host.data().storage.projects, filter)
-  assert.deepEqual(host.data().storage.board, BOARD_REF)
+  assert.deepEqual(host.data().storage.boards, [BOARD_REF])
   await worker.deactivate()
 })
 
@@ -1116,17 +1157,17 @@ test('a new PAT forgets who "me" is on the board', async () => {
   useRoutes(...boardRoutes())
   const host = mockHost({
     settings: { organization: 'contoso' },
-    storage: { board: BOARD_REF },
+    storage: { boards: [BOARD_REF] },
     secrets: { pat: STORED },
     results: keyring
   })
   const worker = await mountWorker(main, { host })
-  const first = await worker.request('board.get')
+  const first = await worker.request('board.get', TEAM)
   assert.ok(first.ok && first.items[0]!.mine)
   // Another person's PAT: connectionData now names someone else.
   const fetch = useRoutes(['/_apis/connectionData', connectionData('other')], ...boardRoutes())
   assert.ok((await worker.request('config.save', { organization: 'contoso', pat: 'another-fake-pat' })).ok)
-  const second = await worker.request('board.get')
+  const second = await worker.request('board.get', TEAM)
   assert.ok(second.ok && !second.items[0]!.mine)
   assert.ok(fetch.calls.some((c) => c.url.includes('/_apis/connectionData')))
   await worker.deactivate()

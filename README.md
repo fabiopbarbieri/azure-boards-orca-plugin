@@ -2,7 +2,7 @@
 
 ![Azure Boards for Orca: the team board and the Start work form in Orca's sidebar](assets/cover.png)
 
-Your Azure Boards work items in [Orca](https://github.com/stablyai/orca)'s sidebar: see what is assigned to you and your team's board, move items, and hand one to a coding agent with a ready prompt.
+Your Azure Boards work items in [Orca](https://github.com/stablyai/orca)'s sidebar: see what is assigned to you and your teams' boards, move items, and hand one to a coding agent with a ready prompt.
 
 Azure DevOps Services (`https://dev.azure.com/<organization>`) only. It needs no Azure Repos: your code can live anywhere. Works on Linux and Windows.
 
@@ -28,9 +28,9 @@ Azure DevOps Services (`https://dev.azure.com/<organization>`) only. It needs no
 | | |
 |---|---|
 | **Assigned to me** | Your open work items, newest change first, grouped by state, by board column or not at all. |
-| **Board** | Your team's board for the current iteration: real columns and order, Doing/Done halves, WIP limits (`In Progress · 3/7`), your items highlighted, and a switch between the Epics, Features and Stories boards. |
+| **Boards** | One tab per team board you add, across projects, for the team's current iteration: real columns and order, Doing/Done halves, WIP limits (`In Progress · 3/7`), your items highlighted, and a switch between the Epics, Features and Stories boards. |
 | **At a glance** | The type's icon, child tasks done (`📋 1/4`) and linked GitHub pull requests (`2 PRs`) on every item. |
-| **Search** | Filter either tab by number (`123`, `#123`) or by part of the title, ignoring case and accents. |
+| **Search** | Filter any tab by number (`123`, `#123`) or by part of the title, ignoring case and accents. |
 | **Move to** | Change an item's state, or its board column and Doing/Done half, without leaving Orca. |
 | **Start work** | Send an item to a coding agent already open in Orca, or to a new worktree with a new agent. |
 | **Clean titles** | Hides the leading `[Team or area name]` that many teams put in titles: `[Web Team] Fix login` reads `Fix login`. |
@@ -52,13 +52,13 @@ Azure DevOps Services (`https://dev.azure.com/<organization>`) only. It needs no
 
    | Scope | Unlocks |
    |---|---|
-   | **Work Items (Read)** | Required: both tabs, search and Start work. |
-   | **Project and Team (Read)** | The full project list in the project filter, and the team picker for the Board tab. |
+   | **Work Items (Read)** | Required: every tab, search and Start work. |
+   | **Project and Team (Read)** | The full project list in the project filter, and the team picker for the board tabs. |
    | **Work Items (Read & write)** | **Move to**. |
 
 3. **Connect.** Open the **Azure Boards** panel, enter the **organization** (its name, or paste the URL) and the **PAT**, and press **Connect**. Nothing is saved until Azure DevOps accepts them.
 
-4. **Choose a board** (optional). In the panel's settings, under **Board**, pick the project and team whose board the **Board** tab shows, then press **Save**.
+4. **Add boards** (optional). In the panel's settings, under **Boards**, pick a project and a team and press **Add**; repeat for every team you follow, in any project, then press **Save**. Each board gets its own tab, named after its team.
 
 ## Using the panel
 
@@ -68,9 +68,9 @@ Every open work item assigned to you (`[System.AssignedTo] = @Me`), up to 200, n
 
 Each line shows the number and title, then the type, the state or column, child tasks done, linked pull requests and, when your items span several projects, the project.
 
-### Board
+### Boards
 
-Your team's board for its current iteration, with every item on it, not only yours. Columns keep the board's order and WIP limits; a split column shows its **Doing** and **Done** halves; done columns start folded. Your own items are highlighted. The menu next to the toolbar switches between the team's **Epics**, **Features** and **Stories** boards.
+Each board you add has its own tab, named after the team (with the project too when two teams share a name). It shows the team's current iteration with every item on it, not only yours. Columns keep the board's order and WIP limits; a split column shows its **Doing** and **Done** halves; done columns start folded. Your own items are highlighted. The menu next to the toolbar switches between the team's **Epics**, **Features** and **Stories** boards, and each tab remembers its own. A tab loads when you first open it. With no board added, a single **Board** tab offers to add one.
 
 ### Item actions
 
@@ -80,7 +80,7 @@ Click an item to open its actions; click it again, or the close button, to fold 
 |---|---|
 | 🌐 **Open in browser** | Opens the item in Azure DevOps in your system browser. The first time, Orca asks before it opens `dev.azure.com`. |
 | **Start work** | Sends the item to a coding agent. See [Start work](#start-work). |
-| **Move to** | **Assigned to me**: another state of the item's type. **Board**: another column, or the Doing or Done half of a split column; the state follows the column, as on the board. The tab reloads afterwards. If Azure DevOps refuses (a state transition or a rule of your process), its message shows in the item. |
+| **Move to** | **Assigned to me**: another state of the item's type. **A board tab**: another column of that board, or the Doing or Done half of a split column; the state follows the column, as on the board. The tab reloads afterwards, and the other tabs when you open them. If Azure DevOps refuses (a state transition or a rule of your process), its message shows in the item. |
 | 📋 **Children** | Shown on an item with child work items (`📋 done/total`): lists them under the item, loaded when you open it. Each child has the same actions and, if it has children of its own, opens them too (Epic → Feature → Story → Task). |
 
 ### Search, folding and refresh
@@ -114,7 +114,7 @@ Open the panel's **Settings** (gear icon). Each section folds and shows its curr
 |---|---|
 | **Connection** | The organization and the PAT. To change either, delete the stored PAT with the trash button and connect again. The PAT is not part of Save. |
 | **Projects** | **All projects** (including ones you gain access to later), or only the ones you tick. Only projects you can access are listed. |
-| **Board** | The project and team whose board the Board tab shows. |
+| **Boards** | The team boards that get a tab: pick a project and a team and press **Add**; the trash button removes one. Each team can be added once. |
 | **Display** | Remove the area prefix from titles; hide completed items (off, in child lists only, or everywhere). |
 | **Refresh** | How often the visible tab reloads: off, 5, 15 or 30 minutes. |
 
@@ -127,11 +127,11 @@ Under **Settings → Plugins → Azure Boards** (labels in English: Orca does no
 | Organization | empty | The name in `https://dev.azure.com/<organization>`. |
 | Group work items by | State | No grouping, State or Board column. Same as the panel's menu. |
 | Remove the area prefix from titles | on | Hides a leading `[...]` that matches a segment of the item's area path. In `[Web Team \| 1234 \| Service]` only the area goes: `[1234 \| Service]`. `[BUG]` stays. |
-| Hide completed items | Off | **In child lists only** leaves completed children (state category Completed, such as Closed or Done) out of an item's child list and says how many are hidden. **Everywhere** also leaves them out of **Assigned to me** and the **Board**. |
+| Hide completed items | Off | **In child lists only** leaves completed children (state category Completed, such as Closed or Done) out of an item's child list and says how many are hidden. **Everywhere** also leaves them out of **Assigned to me** and the board tabs. |
 | Refresh every | 5 minutes | Off, 5, 15 or 30 minutes, while the panel is visible. |
 | Hidden states | `Closed, Done, Removed` | Comma-separated states left out of **Assigned to me**. Adjust it to your process. |
 
-The project filter, the chosen board and the Start work choices are kept in the plugin's own storage, by id, so renaming a project does not break them.
+The project filter, the boards you added and the Start work choices are kept in the plugin's own storage, by id, so renaming a project does not break them. A board chosen in version 0.2.0 or earlier becomes the first added board.
 
 ## Permissions
 
@@ -156,7 +156,7 @@ The plugin runs as a `trusted-worker`: a Node.js process with your user's access
 | **The PAT can't change work items** | **Move to** needs **Work Items (Read & write)**. | Create a PAT with it and reconnect. |
 | **Azure DevOps refused the change** | The process does not allow that state transition, or a rule failed. | Read the server's message under it; move in steps or fill the required fields in Azure DevOps. |
 | **Not found** | The organization or project does not exist, or you cannot see it. | Check the organization name. |
-| **No board chosen** / **No current iteration** | The Board tab has no team yet, or the team has no iteration covering today. | Pick a board in **Settings → Board**, or check the team's iterations in Azure DevOps. |
+| **No board added** / **No current iteration** | No team board was added yet, or the tab's team has no iteration covering today. | Add a board in **Settings → Boards**, or check the team's iterations in Azure DevOps. |
 | **Certificate not trusted** | A proxy on your network inspects HTTPS. | Start Orca with `NODE_EXTRA_CA_CERTS` pointing to the proxy's CA file. |
 | **No connection** | The server did not answer. | Check the network, VPN or proxy. |
 | **The PAT cannot be stored safely** | Orca has no OS keyring to encrypt secrets. | Install and unlock GNOME Keyring or KWallet, then restart Orca. |
@@ -168,7 +168,7 @@ The plugin runs as a `trusted-worker`: a Node.js process with your user's access
 
 - Azure DevOps Services only; Azure DevOps Server (on-premises) is not supported.
 - Up to 200 items per tab.
-- Grouping **Assigned to me** by board column orders columns by state category, which is close to, but not always exactly, a board's order. The **Board** tab uses the real order.
+- Grouping **Assigned to me** by board column orders columns by state category, which is close to, but not always exactly, a board's order. The board tabs use the real order.
 - Type icons are Orca's icons matched to Azure DevOps icon names, not the Azure DevOps artwork.
 - The agent list for a new worktree cannot tell which agents are installed: Orca does not expose that to plugins.
 - Behind a proxy that requires configuration, Node's `fetch` may not use it; this has not been tested.
@@ -183,7 +183,7 @@ The panel never touches the network: it asks the plugin's worker with `plugin.re
 | Feature | Calls |
 |---|---|
 | Assigned to me | `POST {org}/_apis/wit/wiql` (filtered by project when you chose some), then `POST {org}/_apis/wit/workitemsbatch` for the fields. |
-| Board | `GET {org}/{project}/{team}/_apis/work/boards/{board}` (columns, splits, WIP limits, the board's column fields), `.../work/teamsettings/iterations?$timeframe=current`, `.../work/teamsettings/teamfieldvalues`, then a team-scoped WIQL query and `workitemsbatch`. |
+| Board tabs | `GET {org}/{project}/{team}/_apis/work/boards/{board}` (columns, splits, WIP limits, the board's column fields), `.../work/teamsettings/iterations?$timeframe=current`, `.../work/teamsettings/teamfieldvalues`, then a team-scoped WIQL query and `workitemsbatch`. |
 | Counters | `workitemsbatch` with `$expand=relations`: child links and GitHub pull request links. |
 | Icons and state order | `GET {org}/{project}/_apis/wit/workitemtypes`, cached for an hour. |
 | Move to | `PATCH {org}/_apis/wit/workitems/{id}` (`application/json-patch+json`): `System.State`, plus the board's column and Done fields for a column. |
@@ -223,7 +223,7 @@ A dev-loaded copy and an installed copy share the plugin id, so they also share 
 
 ## Português (Brasil)
 
-Seus work items do Azure Boards na barra lateral do [Orca](https://github.com/stablyai/orca): veja o que está atribuído a você e o board do seu time, mova itens e passe um deles para um agente de código com o prompt pronto.
+Seus work items do Azure Boards na barra lateral do [Orca](https://github.com/stablyai/orca): veja o que está atribuído a você e os boards dos seus times, mova itens e passe um deles para um agente de código com o prompt pronto.
 
 Só Azure DevOps Services (`https://dev.azure.com/<organização>`). Não precisa do Azure Repos: o código pode estar em qualquer lugar. Funciona no Linux e no Windows.
 
@@ -232,7 +232,7 @@ Só Azure DevOps Services (`https://dev.azure.com/<organização>`). Não precis
 | | |
 |---|---|
 | **Atribuídos a mim** | Seus work items abertos, do mais recente para o mais antigo, agrupados por estado, por coluna do board ou sem agrupamento. |
-| **Board** | O board do seu time na iteração atual: colunas e ordem reais, metades Em andamento/Concluído, limites de WIP (`In Progress · 3/7`), seus itens destacados e troca entre os boards Epics, Features e Stories. |
+| **Boards** | Uma aba para cada board de time que você adicionar, de qualquer projeto, na iteração atual do time: colunas e ordem reais, metades Em andamento/Concluído, limites de WIP (`In Progress · 3/7`), seus itens destacados e troca entre os boards Epics, Features e Stories. |
 | **Num relance** | Ícone do tipo, tarefas filhas concluídas (`📋 1/4`) e PRs do GitHub vinculados (`2 PRs`) em cada item. |
 | **Busca** | Filtra qualquer aba pelo número (`123`, `#123`) ou por um trecho do título, sem diferenciar maiúsculas nem acentos. |
 | **Mover para** | Muda o estado do item, ou a coluna do board e a metade Em andamento/Concluído, sem sair do Orca. |
@@ -256,19 +256,19 @@ Só Azure DevOps Services (`https://dev.azure.com/<organização>`). Não precis
 
    | Escopo | Libera |
    |---|---|
-   | **Work Items (Read)** | Obrigatório: as duas abas, a busca e o Iniciar trabalho. |
-   | **Project and Team (Read)** | A lista completa de projetos no filtro e a escolha do time na aba Board. |
+   | **Work Items (Read)** | Obrigatório: todas as abas, a busca e o Iniciar trabalho. |
+   | **Project and Team (Read)** | A lista completa de projetos no filtro e a escolha do time para as abas de board. |
    | **Work Items (Read & write)** | **Mover para**. |
 
 3. **Conecte.** Abra o painel **Azure Boards**, informe a **organização** (o nome ou a URL) e o **PAT** e clique em **Conectar**. Nada é salvo antes de o Azure DevOps aceitar.
 
-4. **Escolha um board** (opcional). Nas configurações do painel, em **Board**, escolha o projeto e o time cujo board a aba **Board** mostra e clique em **Salvar**.
+4. **Adicione boards** (opcional). Nas configurações do painel, em **Boards**, escolha um projeto e um time e clique em **Adicionar**; repita para cada time que você acompanha, de qualquer projeto, e clique em **Salvar**. Cada board ganha uma aba com o nome do time.
 
 ### Usando o painel
 
 **Atribuídos a mim.** Todos os work items abertos atribuídos a você, até 200, do mais recente para o mais antigo. O menu da barra agrupa por **estado** (na ordem do processo: proposto, em andamento, resolvido, concluído), por **coluna do board** ou sem agrupamento. Os estados em **Hidden states** (Closed, Done e Removed por padrão) ficam de fora.
 
-**Board.** O board do seu time na iteração atual, com todos os itens, não só os seus. As colunas seguem a ordem e os limites de WIP do board; coluna dividida mostra as metades **Em andamento** e **Concluído**; colunas de concluído começam recolhidas. Seus itens ficam destacados. O menu ao lado da barra alterna entre os boards **Epics**, **Features** e **Stories** do time.
+**Boards.** Cada board adicionado tem uma aba com o nome do time (e o projeto junto, quando dois times têm o mesmo nome). Ela mostra a iteração atual do time com todos os itens, não só os seus. As colunas seguem a ordem e os limites de WIP do board; coluna dividida mostra as metades **Em andamento** e **Concluído**; colunas de concluído começam recolhidas. Seus itens ficam destacados. O menu ao lado da barra alterna entre os boards **Epics**, **Features** e **Stories** do time, e cada aba lembra o seu. A aba carrega quando você a abre pela primeira vez. Sem nenhum board adicionado, uma aba **Board** única oferece adicionar um.
 
 **Ações do item.** Clique num item para abrir as ações; clique de novo nele, ou no botão de fechar, para recolher.
 
@@ -276,7 +276,7 @@ Só Azure DevOps Services (`https://dev.azure.com/<organização>`). Não precis
 |---|---|
 | 🌐 **Abrir no navegador** | Abre o item no Azure DevOps no navegador do sistema. Na primeira vez, o Orca pede confirmação para abrir o `dev.azure.com`. |
 | **Iniciar trabalho** | Manda o item para um agente de código. Veja [Iniciar trabalho](#iniciar-trabalho). |
-| **Mover para** | **Atribuídos a mim**: outro estado do tipo do item. **Board**: outra coluna, ou a metade Em andamento ou Concluído de uma coluna dividida; o estado acompanha a coluna, como no board. A aba recarrega em seguida. Se o Azure DevOps recusar (transição de estado ou regra do processo), a mensagem dele aparece no item. |
+| **Mover para** | **Atribuídos a mim**: outro estado do tipo do item. **Aba de board**: outra coluna daquele board, ou a metade Em andamento ou Concluído de uma coluna dividida; o estado acompanha a coluna, como no board. A aba recarrega em seguida, e as outras quando você as abrir. Se o Azure DevOps recusar (transição de estado ou regra do processo), a mensagem dele aparece no item. |
 | 📋 **Filhos** | Aparece num item com work items filhos (`📋 concluídos/total`): lista os filhos abaixo do item, carregados quando você abre. Cada filho tem as mesmas ações e, se tiver filhos, abre os dele também (Epic → Feature → Story → Task). |
 
 **Busca, recolher e atualizar.** A **lupa** abre a busca; grupos e colunas com resultado abrem durante a busca, e fechar a lupa limpa a busca, sem consultar o Azure de novo. Grupos e colunas recolhem, e o painel lembra quais você recolheu. **Atualizar** recarrega a aba visível na hora; ela também recarrega sozinha a cada 5 minutos com o painel visível.
@@ -304,7 +304,7 @@ O painel lembra qual projeto do Orca você usou para cada projeto do Azure DevOp
 |---|---|
 | **Conexão** | A organização e o PAT. Para trocar, apague o PAT guardado com a lixeira e conecte de novo. O PAT não entra no Salvar. |
 | **Projetos** | **Todos os projetos** (inclusive os que você ganhar acesso depois) ou só os marcados. Só aparecem projetos a que você tem acesso. |
-| **Board** | O projeto e o time cujo board a aba Board mostra. |
+| **Boards** | Os boards de time que ganham aba: escolha um projeto e um time e clique em **Adicionar**; a lixeira remove. Cada time entra uma vez só. |
 | **Exibição** | Remover o prefixo da área dos títulos; ocultar concluídos (desligado, só nas listas de filhos ou em tudo). |
 | **Atualização** | De quanto em quanto tempo a aba visível recarrega: desligado, 5, 15 ou 30 minutos. |
 
@@ -325,7 +325,7 @@ O plugin roda como `trusted-worker` (um processo Node.js com o acesso do seu usu
 | **O PAT não pode alterar work items** | O **Mover para** precisa de **Work Items (Read & write)**. | Crie um PAT com esse escopo e reconecte. |
 | **O Azure DevOps recusou a mudança** | O processo não permite essa transição, ou uma regra falhou. | Leia a mensagem do servidor logo abaixo; mova em etapas ou preencha os campos obrigatórios no Azure DevOps. |
 | **Não encontrado** | A organização ou o projeto não existe, ou você não tem acesso. | Confira o nome da organização. |
-| **Nenhum board escolhido** / **Sem iteração atual** | A aba Board ainda não tem time, ou o time não tem iteração que cubra hoje. | Escolha um board em **Configurações → Board** ou confira as iterações do time no Azure DevOps. |
+| **Nenhum board adicionado** / **Sem iteração atual** | Nenhum board de time foi adicionado ainda, ou o time da aba não tem iteração que cubra hoje. | Adicione um board em **Configurações → Boards** ou confira as iterações do time no Azure DevOps. |
 | **Certificado não confiável** | Um proxy da rede inspeciona HTTPS. | Abra o Orca com `NODE_EXTRA_CA_CERTS` apontando para o arquivo da CA do proxy. |
 | **Sem conexão** | O servidor não respondeu. | Confira a rede, a VPN ou o proxy. |
 | **Não dá para guardar o PAT com segurança** | O Orca não tem um keyring do sistema para criptografar segredos. | Instale e desbloqueie o GNOME Keyring ou o KWallet e reinicie o Orca. |
@@ -337,7 +337,7 @@ O plugin roda como `trusted-worker` (um processo Node.js com o acesso do seu usu
 
 - Só Azure DevOps Services; o Azure DevOps Server (on-premises) não é suportado.
 - Até 200 itens por aba.
-- Agrupar **Atribuídos a mim** por coluna do board ordena as colunas pela categoria do estado, o que fica perto, mas nem sempre igual, à ordem do board. A aba **Board** usa a ordem real.
+- Agrupar **Atribuídos a mim** por coluna do board ordena as colunas pela categoria do estado, o que fica perto, mas nem sempre igual, à ordem do board. As abas de board usam a ordem real.
 - Os ícones de tipo são ícones do Orca associados aos nomes de ícone do Azure DevOps, não a arte do Azure DevOps.
 - A lista de agentes do worktree novo não sabe quais agentes estão instalados: o Orca não expõe isso para plugins.
 - Atrás de um proxy que exige configuração, o `fetch` do Node pode não usá-lo; isso não foi testado.

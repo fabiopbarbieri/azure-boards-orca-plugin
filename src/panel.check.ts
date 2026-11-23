@@ -15,7 +15,7 @@ const configured: ConfigView = {
   hideClosed: 'off',
   hiddenStates: ['Closed', 'Done', 'Removed'],
   refreshMinutes: 5,
-  board: null
+  boards: []
 }
 const blank: ConfigView = { ...configured, organization: '', hasPat: false }
 
@@ -101,7 +101,11 @@ const board: BoardResult = {
     card(5005, 'Quarterly billing epic', 'Closed', 'Rui Costa', true)
   ]
 }
-const withBoard: ConfigView = { ...configured, board: boardRef }
+const withBoard: ConfigView = { ...configured, boards: [boardRef] }
+// Two teams named Core in different projects: their tabs carry the project too.
+const sameName: BoardRef = { ...boardRef, projectId: 'p-api', projectName: 'API', teamId: 't-core-api' }
+const ops: BoardRef = { ...boardRef, projectId: 'p-infra', projectName: 'Infra', teamId: 't-ops', teamName: 'Ops' }
+const withBoards: ConfigView = { ...configured, boards: [boardRef, sameName, ops] }
 
 const projects = ['Web', 'Reports', 'Infra'].map((name) => ({ id: name, name }))
 
@@ -120,13 +124,22 @@ export default defineCheck({
         ]
       }
     },
+    // The single Board tab of 0.2.0 opens the first registered board.
     persisted: { plugin: { activeTab: 'board' } }
+  },
+  severalBoards: {
+    requests: {
+      'config.get': withBoards,
+      'items.list': list,
+      'board.get': board,
+      'boards.list': { ok: true, boards: [{ id: 'b-stories', name: 'Stories' }] }
+    },
+    persisted: { plugin: { activeTab: 'board-t-core' } }
   },
   boardNotConfigured: {
     requests: {
       'config.get': configured,
-      'items.list': list,
-      'board.get': { ok: false, error: { kind: 'boardNotConfigured' } }
+      'items.list': list
     },
     persisted: { plugin: { activeTab: 'board' } }
   },
@@ -136,7 +149,7 @@ export default defineCheck({
       'items.list': list,
       'board.get': { ok: false, error: { kind: 'noCurrentIteration' } }
     },
-    persisted: { plugin: { activeTab: 'board' } }
+    persisted: { plugin: { activeTab: 'board-t-core' } }
   },
   setup: { requests: { 'config.get': blank } },
   noKeyring: { requests: { 'config.get': { ...blank, protection: 'unavailable' } } },

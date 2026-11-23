@@ -39,9 +39,9 @@ const patchCall = (f: { calls: Call[] }) => f.calls.filter((c) => c.method === '
 
 test('parseMove validates the input', () => {
   assert.deepEqual(parseMove({ id: 1, target: { kind: 'state', state: 'Active' } }), { id: 1, target: { kind: 'state', state: 'Active' } })
-  assert.deepEqual(parseMove({ id: 1, target: { kind: 'column', columnId: 'c', done: false } }), {
+  assert.deepEqual(parseMove({ id: 1, target: { kind: 'column', teamId: 't1', columnId: 'c', done: false } }), {
     id: 1,
-    target: { kind: 'column', columnId: 'c', done: false }
+    target: { kind: 'column', teamId: 't1', columnId: 'c', done: false }
   })
   for (const bad of [
     null,
@@ -52,9 +52,11 @@ test('parseMove validates the input', () => {
     { id: 1 },
     { id: 1, target: { kind: 'state', state: '' } },
     { id: 1, target: { kind: 'state', state: 3 } },
-    { id: 1, target: { kind: 'column', columnId: '', done: true } },
-    { id: 1, target: { kind: 'column', columnId: 'c' } },
-    { id: 1, target: { kind: 'column', columnId: 'c', done: 'yes' } },
+    { id: 1, target: { kind: 'column', teamId: 't1', columnId: '', done: true } },
+    { id: 1, target: { kind: 'column', teamId: 't1', columnId: 'c' } },
+    { id: 1, target: { kind: 'column', teamId: 't1', columnId: 'c', done: 'yes' } },
+    { id: 1, target: { kind: 'column', columnId: 'c', done: false } },
+    { id: 1, target: { kind: 'column', teamId: '', columnId: 'c', done: false } },
     { id: 1, target: { kind: 'other' } }
   ]) {
     assert.equal(parseMove(bad), null, JSON.stringify(bad))
@@ -74,7 +76,7 @@ test('moves to a state with one PATCH', async () => {
 
 test('moves to the Doing half of a split column', async () => {
   const fetch = routedFetch(...routes('Story'))
-  const result = await moveItem(conn, ref, 42, { kind: 'column', columnId: 'c1', done: false }, fetch)
+  const result = await moveItem(conn, ref, 42, { kind: 'column', teamId: 't1', columnId: 'c1', done: false }, fetch)
   assert.deepEqual(result, { ok: true })
   assert.deepEqual(patchCall(fetch)[0]!.body, [
     { op: 'add', path: '/fields/WEF_1_Kanban.Column', value: 'Doing' },
@@ -88,7 +90,7 @@ test('moves to the Doing half of a split column', async () => {
 
 test('moves to the Done half of a split column', async () => {
   const fetch = routedFetch(...routes('Bug'))
-  await moveItem(conn, ref, 42, { kind: 'column', columnId: 'c1', done: true }, fetch)
+  await moveItem(conn, ref, 42, { kind: 'column', teamId: 't1', columnId: 'c1', done: true }, fetch)
   assert.deepEqual(patchCall(fetch)[0]!.body, [
     { op: 'add', path: '/fields/WEF_1_Kanban.Column', value: 'Doing' },
     { op: 'add', path: '/fields/WEF_1_Kanban.Column.Done', value: true },
@@ -98,7 +100,7 @@ test('moves to the Done half of a split column', async () => {
 
 test('a non-split column clears the done field, whatever `done` says', async () => {
   const fetch = routedFetch(...routes('Story'))
-  await moveItem(conn, ref, 42, { kind: 'column', columnId: 'c2', done: true }, fetch)
+  await moveItem(conn, ref, 42, { kind: 'column', teamId: 't1', columnId: 'c2', done: true }, fetch)
   assert.deepEqual(patchCall(fetch)[0]!.body, [
     { op: 'add', path: '/fields/WEF_1_Kanban.Column', value: 'Review' },
     { op: 'add', path: '/fields/WEF_1_Kanban.Column.Done', value: false },
@@ -108,21 +110,21 @@ test('a non-split column clears the done field, whatever `done` says', async () 
 
 test('a column that does not map the item type is a rule error and patches nothing', async () => {
   const fetch = routedFetch(...routes('Bug'))
-  const result = await moveItem(conn, ref, 42, { kind: 'column', columnId: 'c2', done: false }, fetch)
+  const result = await moveItem(conn, ref, 42, { kind: 'column', teamId: 't1', columnId: 'c2', done: false }, fetch)
   assert.deepEqual(result, { ok: false, error: { kind: 'rule', detail: 'the column does not accept this work item type' } })
   assert.equal(patchCall(fetch).length, 0)
 })
 
 test('an unknown column is a server error and patches nothing', async () => {
   const fetch = routedFetch(...routes('Story'))
-  const result = await moveItem(conn, ref, 42, { kind: 'column', columnId: 'zzz', done: false }, fetch)
+  const result = await moveItem(conn, ref, 42, { kind: 'column', teamId: 't1', columnId: 'zzz', done: false }, fetch)
   assert.deepEqual(result, { ok: false, error: { kind: 'server', detail: 'unknown column' } })
   assert.equal(patchCall(fetch).length, 0)
 })
 
 test('a column target without a stored board asks nothing', async () => {
   const fetch = routedFetch()
-  const result = await moveItem(conn, null, 42, { kind: 'column', columnId: 'c1', done: false }, fetch)
+  const result = await moveItem(conn, null, 42, { kind: 'column', teamId: 't1', columnId: 'c1', done: false }, fetch)
   assert.deepEqual(result, { ok: false, error: { kind: 'boardNotConfigured' } })
   assert.equal(fetch.calls.length, 0)
 })
@@ -132,10 +134,10 @@ test('the GETs keep their usual error mapping', async () => {
     ['/work/boards/b1', json({ message: 'gone' }, 404)],
     ['/_apis/wit/workitems/42?fields=', typeAnswer('Story')]
   )
-  const result = await moveItem(conn, ref, 42, { kind: 'column', columnId: 'c1', done: false }, fetch)
+  const result = await moveItem(conn, ref, 42, { kind: 'column', teamId: 't1', columnId: 'c1', done: false }, fetch)
   assert.deepEqual(result, { ok: false, error: { kind: 'notFound', detail: 'gone' } })
   const f2 = routedFetch(['/work/boards/b1', board()], ['/_apis/wit/workitems/42?fields=', json({ message: 'no' }, 403)])
-  const r2 = await moveItem(conn, ref, 42, { kind: 'column', columnId: 'c1', done: false }, f2)
+  const r2 = await moveItem(conn, ref, 42, { kind: 'column', teamId: 't1', columnId: 'c1', done: false }, f2)
   assert.deepEqual(r2, { ok: false, error: { kind: 'scope', detail: 'no' } })
 })
 
@@ -167,7 +169,7 @@ test('400 is a rule with the server message, without the PAT or a status prefix'
 
 test('a 400 on a GET is not a rule, and other PATCH failures keep their mapping', async () => {
   const f1 = routedFetch(['/work/boards/b1', json({ message: 'bad' }, 400)], ['/_apis/wit/workitems/42?fields=', typeAnswer('Story')])
-  const r1 = await moveItem(conn, ref, 42, { kind: 'column', columnId: 'c1', done: false }, f1)
+  const r1 = await moveItem(conn, ref, 42, { kind: 'column', teamId: 't1', columnId: 'c1', done: false }, f1)
   assert.deepEqual(r1, { ok: false, error: { kind: 'server', detail: 'HTTP 400: bad' } })
   const r2 = await moveItem(conn, null, 42, { kind: 'state', state: 'A' }, routedFetch([(c) => c.method === 'PATCH', json({ message: 'x' }, 500)]))
   assert.deepEqual(r2, { ok: false, error: { kind: 'server', detail: 'HTTP 500: x' } })

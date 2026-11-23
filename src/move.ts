@@ -1,4 +1,4 @@
-// Moving a work item: to a state, or to a column of the chosen board. Pure like azure.ts: it takes
+// Moving a work item: to a state, or to a column of a registered board. Pure like azure.ts: it takes
 // `fetch` as an argument and never touches Orca.
 import {
   API_VERSION,
@@ -15,7 +15,10 @@ type Op = { op: 'add'; path: string; value: string | boolean }
 
 /** A well-formed request, or null: `id` a positive integer and a complete target. */
 export function parseMove(input: unknown): { id: number; target: MoveTarget } | null {
-  const raw = input as { id?: unknown; target?: { kind?: unknown; state?: unknown; columnId?: unknown; done?: unknown } } | null
+  const raw = input as {
+    id?: unknown
+    target?: { kind?: unknown; state?: unknown; teamId?: unknown; columnId?: unknown; done?: unknown }
+  } | null
   if (!raw || typeof raw.id !== 'number' || !Number.isInteger(raw.id) || raw.id <= 0) return null
   const t = raw.target
   if (!t || typeof t !== 'object') return null
@@ -23,8 +26,8 @@ export function parseMove(input: unknown): { id: number; target: MoveTarget } | 
     return typeof t.state === 'string' && t.state.trim() ? { id: raw.id, target: { kind: 'state', state: t.state } } : null
   }
   if (t.kind === 'column') {
-    return typeof t.columnId === 'string' && t.columnId && typeof t.done === 'boolean'
-      ? { id: raw.id, target: { kind: 'column', columnId: t.columnId, done: t.done } }
+    return typeof t.teamId === 'string' && t.teamId && typeof t.columnId === 'string' && t.columnId && typeof t.done === 'boolean'
+      ? { id: raw.id, target: { kind: 'column', teamId: t.teamId, columnId: t.columnId, done: t.done } }
       : null
   }
   return null
@@ -56,7 +59,7 @@ function fail(error: ListError): MoveResult {
   return { ok: false, error }
 }
 
-/** Moves the item. `ref` is the stored board, needed only for a column target. */
+/** Moves the item. `ref` is the registered board of the target's team, needed only for a column target. */
 export async function moveItem(
   conn: Connection,
   ref: BoardRef | null,

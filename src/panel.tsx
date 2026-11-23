@@ -125,6 +125,10 @@ type Messages = {
   chooseBoard: string
   boardSection: string
   boardNotChosen: string
+  noBoardsYet: string
+  addBoard: string
+  removeBoard: (team: string) => string
+  allTeamsAdded: string
   projectLabel: string
   teamLabel: string
   boardLabel: string
@@ -232,11 +236,15 @@ const EN: Messages = {
   tabAssigned: (n) => (n === null ? 'Assigned to me' : `Assigned to me · ${n}`),
   tabBoard: 'Board',
   loadingBoard: 'Loading board',
-  boardNotConfiguredTitle: 'Choose a team board',
-  boardNotConfiguredBody: 'Shows every item of the team’s current iteration.',
-  chooseBoard: 'Choose board',
-  boardSection: 'Board',
-  boardNotChosen: 'Not chosen',
+  boardNotConfiguredTitle: 'Add a team board',
+  boardNotConfiguredBody: 'Each board you add gets its own tab with every item of the team’s current iteration.',
+  chooseBoard: 'Add board',
+  boardSection: 'Boards',
+  boardNotChosen: 'None',
+  noBoardsYet: 'No boards yet. Pick a project and a team, then press Add.',
+  addBoard: 'Add',
+  removeBoard: (team) => `Remove ${team}`,
+  allTeamsAdded: 'Every team of this project is already added.',
   projectLabel: 'Project',
   teamLabel: 'Team',
   boardLabel: 'Board',
@@ -320,7 +328,7 @@ const EN: Messages = {
       title: 'Azure DevOps refused the change',
       body: 'The state transition or a rule of the process does not allow it. The server’s message follows.'
     },
-    boardNotConfigured: { title: 'No board chosen', body: 'Choose a team board in the settings.' },
+    boardNotConfigured: { title: 'No board added', body: 'Add a team board in the settings.' },
     noCurrentIteration: {
       title: 'No current iteration',
       body: 'The team has no iteration that covers today. Check its iterations in Azure DevOps.'
@@ -380,11 +388,15 @@ const PT: Messages = {
   tabAssigned: (n) => (n === null ? 'Atribuídos a mim' : `Atribuídos a mim · ${n}`),
   tabBoard: 'Board',
   loadingBoard: 'Carregando board',
-  boardNotConfiguredTitle: 'Escolha o board do time',
-  boardNotConfiguredBody: 'Mostra todos os itens da iteração atual do time.',
-  chooseBoard: 'Escolher board',
-  boardSection: 'Board',
-  boardNotChosen: 'Não escolhido',
+  boardNotConfiguredTitle: 'Adicione o board de um time',
+  boardNotConfiguredBody: 'Cada board adicionado ganha uma aba com todos os itens da iteração atual do time.',
+  chooseBoard: 'Adicionar board',
+  boardSection: 'Boards',
+  boardNotChosen: 'Nenhum',
+  noBoardsYet: 'Nenhum board ainda. Escolha um projeto e um time e clique em Adicionar.',
+  addBoard: 'Adicionar',
+  removeBoard: (team) => `Remover ${team}`,
+  allTeamsAdded: 'Todos os times deste projeto já foram adicionados.',
   projectLabel: 'Projeto',
   teamLabel: 'Time',
   boardLabel: 'Board',
@@ -468,7 +480,7 @@ const PT: Messages = {
       title: 'O Azure DevOps recusou a mudança',
       body: 'A transição de estado ou uma regra do processo não permite. A mensagem do servidor segue abaixo.'
     },
-    boardNotConfigured: { title: 'Nenhum board escolhido', body: 'Escolha o board de um time nas configurações.' },
+    boardNotConfigured: { title: 'Nenhum board adicionado', body: 'Adicione o board de um time nas configurações.' },
     noCurrentIteration: {
       title: 'Sem iteração atual',
       body: 'O time não tem uma iteração que cubra hoje. Confira as iterações dele no Azure DevOps.'
@@ -484,7 +496,11 @@ function t(): Messages {
 // State
 
 type Screen = { kind: 'loading' } | { kind: 'config' } | { kind: 'main' }
-type TabId = 'assigned' | 'board'
+/**
+ * `assigned`, a registered board's tab (`board-<teamId>`), or `board`: the one Board tab shown
+ * while no board is registered, with its empty state.
+ */
+type TabId = string
 type BoardData = Extract<BoardResult, { ok: true }>
 
 /** What one tab shows. Each tab owns its data and loads it when first shown. */
@@ -512,11 +528,11 @@ type Options<T> = { key: string } & (
   | { kind: 'error'; error: ListError }
 )
 
-/** The three Selects of the Board section; the draft's board is set only when all are chosen. */
-type BoardPick = { project: Project | null; team: Team | null; board: BoardSummary | null }
+/** The project and team Selects of the Boards section, for the next board to add. */
+type BoardPick = { project: Project | null; team: Team | null }
 
 /** What the config screen edits until Save; the PAT and the grouping are not part of it. */
-type Draft = Pick<ConfigView, 'allProjects' | 'projects' | 'stripAreaPrefix' | 'hideClosed' | 'refreshMinutes' | 'board'>
+type Draft = Pick<ConfigView, 'allProjects' | 'projects' | 'stripAreaPrefix' | 'hideClosed' | 'refreshMinutes' | 'boards'>
 
 /**
  * The most Orca allows. The board's longest chain is five calls in a row in the worker (the board
@@ -542,24 +558,26 @@ const screen = atom<Screen>({ kind: 'loading' })
 /** Save, Connect and similar calls; the tabs' own loads have their own flags. */
 const busy = atom(false)
 const assignedState = atom<AssignedState>({ kind: 'idle' })
-const boardState = atom<BoardState>({ kind: 'idle' })
+/** What each registered board's tab shows, by team id; absent is idle. */
+const boardStates = atom<Record<string, BoardState>>({})
 const assignedBusy = atom(false)
-const boardBusy = atom(false)
+/** The board tabs loading now, by team id. */
+const boardBusy = atom<Record<string, boolean>>({})
 /** The tab that is shown; kept across runs. */
 const activeTab = atom<TabId>('activeTab', 'assigned', { persist: 'plugin' })
 /** The error the last Connect got, shown on the config screen. */
 const formError = atom<ListError | null>(null)
 const notice = atom<string | null>(null)
 /** Each tab's search row: whether it is shown, and what was typed (never persisted). */
-const searchOpen = atom<Record<TabId, boolean>>({ assigned: false, board: false })
-const searchQuery = atom<Record<TabId, string>>({ assigned: '', board: '' })
+const searchOpen = atom<Record<TabId, boolean>>({})
+const searchQuery = atom<Record<TabId, string>>({})
 const projectsState = atom<ProjectsState>({ kind: 'idle' })
 const teamsState = atom<Options<Team> | null>(null)
 const boardsState = atom<Options<BoardSummary> | null>(null)
 /** The boards of each team (`${projectId}/${teamId}`), for the Board tab's level Select. */
 const boardsCache = atom<Record<string, BoardSummary[]>>({})
-const boardPick = atom<BoardPick>({ project: null, team: null, board: null })
-/** Whether the config screen's Board section is unfolded. */
+const boardPick = atom<BoardPick>({ project: null, team: null })
+/** Whether the config screen's Boards section is unfolded. */
 const boardOpen = atom(false)
 /** The config screen's unsaved preferences; null outside it. */
 const draft = atom<Draft | null>(null)
@@ -625,27 +643,91 @@ function listInputsChanged(a: ConfigView, b: ConfigView): boolean {
   )
 }
 
-function boardChanged(a: ConfigView | null, b: ConfigView): boolean {
-  return JSON.stringify(a?.board ?? null) !== JSON.stringify(b.board)
+const NO_BOARD: TabId = 'board'
+const BOARD_PREFIX = 'board-'
+
+function boardTab(teamId: string): TabId {
+  return `${BOARD_PREFIX}${teamId}`
+}
+
+/** The team of a board tab; null for Assigned to me and the no-board tab. */
+function teamOf(tab: TabId): string | null {
+  return tab.startsWith(BOARD_PREFIX) ? tab.slice(BOARD_PREFIX.length) : null
+}
+
+/** The tabs in order: Assigned to me, then one per registered board, or the no-board tab. */
+function tabsOf(view: ConfigView | null): TabId[] {
+  const boards = view?.boards ?? []
+  return ['assigned', ...(boards.length > 0 ? boards.map((b) => boardTab(b.teamId)) : [NO_BOARD])]
+}
+
+/**
+ * The tab to show for a stored choice: itself while it exists; a removed board (or `board`, the
+ * single tab of earlier versions) falls to the first board, else to Assigned to me.
+ */
+function resolveTab(tab: TabId, view: ConfigView | null): TabId {
+  const tabs = tabsOf(view)
+  if (tabs.includes(tab)) return tab
+  const firstBoard = view?.boards[0]
+  if (teamOf(tab) !== null || tab === NO_BOARD) return firstBoard ? boardTab(firstBoard.teamId) : 'assigned'
+  return 'assigned'
+}
+
+/** The tab that is shown. */
+function currentTab(): TabId {
+  return resolveTab(read(activeTab), read(config))
+}
+
+/** Puts the stored tab back on one that exists, after the boards changed. */
+function fixTab(): void {
+  const tab = currentTab()
+  if (tab !== read(activeTab)) set(activeTab, tab)
+}
+
+/** Loads the tab that is shown when it has nothing yet (after fixTab moved to it). */
+function loadIfIdle(): void {
+  const tab = currentTab()
+  if (stateOf(tab).kind === 'idle' && isConnected(read(config))) void loadTab(tab)
+}
+
+function boardStateOf(teamId: string): BoardState {
+  return read(boardStates)[teamId] ?? { kind: 'idle' }
+}
+
+function stateOf(tab: TabId): AssignedState | BoardState {
+  const team = teamOf(tab)
+  return team === null ? read(assignedState) : boardStateOf(team)
+}
+
+/** The teams whose registered board is new or changed (another level, a rename) between two views. */
+function changedTeams(a: ConfigView | null, b: ConfigView): string[] {
+  const before = new Map((a?.boards ?? []).map((r) => [r.teamId, JSON.stringify(r)]))
+  return b.boards.filter((r) => before.get(r.teamId) !== JSON.stringify(r)).map((r) => r.teamId)
+}
+
+/** Forgets what the tabs of boards no longer registered showed. */
+function dropRemovedBoards(view: ConfigView): void {
+  const teams = new Set(view.boards.map((b) => b.teamId))
+  update(boardStates, (prev) => Object.fromEntries(Object.entries(prev).filter(([team]) => teams.has(team))))
+}
+
+/** Every tab but `keep` loads again when shown. */
+function invalidateOthers(keep: TabId | null): void {
+  for (const tab of tabsOf(read(config))) if (tab !== keep) invalidate(tab)
+}
+
+/**
+ * The tab's label: the team's name, with the project when two registered teams share a name.
+ */
+function boardTabLabel(board: BoardRef, boards: readonly BoardRef[]): string {
+  const shared = boards.filter((b) => b.teamName === board.teamName).length > 1
+  return shared ? `${board.teamName} · ${board.projectName}` : board.teamName
 }
 
 function isConnected(view: ConfigView | null): boolean {
   return Boolean(view?.organization && view.hasPat)
 }
 
-function boardLabelOf(board: { teamName: string; boardName: string } | null, none: string): string {
-  return board ? `${board.teamName} · ${board.boardName}` : none
-}
-
-function pickOf(board: ConfigView['board'] | undefined): BoardPick {
-  return board
-    ? {
-        project: { id: board.projectId, name: board.projectName },
-        team: { id: board.teamId, name: board.teamName },
-        board: { id: board.boardId, name: board.boardName }
-      }
-    : { project: null, team: null, board: null }
-}
 
 function showConfig(unfoldBoard = false): void {
   const current = read(config)
@@ -658,7 +740,7 @@ function showConfig(unfoldBoard = false): void {
   set(projectsState, { kind: 'idle' })
   set(teamsState, null)
   set(boardsState, null)
-  set(boardPick, pickOf(current?.board))
+  set(boardPick, { project: null, team: null })
   set(boardOpen, unfoldBoard)
   set(
     draft,
@@ -669,7 +751,7 @@ function showConfig(unfoldBoard = false): void {
           stripAreaPrefix: current.stripAreaPrefix,
           hideClosed: current.hideClosed,
           refreshMinutes: current.refreshMinutes,
-          board: current.board
+          boards: current.boards
         }
       : null
   )
@@ -696,19 +778,45 @@ function showAssigned(result: ListResult): void {
   }
 }
 
-function showBoard(result: BoardResult): void {
+function setBoardState(teamId: string, state: BoardState): void {
+  update(boardStates, (prev) => ({ ...prev, [teamId]: state }))
+}
+
+function showBoard(teamId: string, result: BoardResult): void {
   if (result.ok) {
-    set(boardState, { kind: 'ready', data: result })
+    setBoardState(teamId, { kind: 'ready', data: result })
     void ensureLevels(result.board)
   } else if (result.error.kind === 'notConfigured') {
     showConfig()
+  } else if (result.error.kind === 'boardNotConfigured') {
+    // The board was removed meanwhile (in another window): take the worker's list of boards.
+    void syncConfig(teamId, result.error)
   } else {
-    set(boardState, { kind: 'error', error: result.error })
+    setBoardState(teamId, { kind: 'error', error: result.error })
   }
 }
 
+/**
+ * Reads the config again and moves off a tab whose board is gone; if the board is still listed,
+ * the tab shows the error instead.
+ */
+async function syncConfig(teamId: string, error: ListError): Promise<void> {
+  let view: ConfigView
+  try {
+    view = await plugin.request('config.get')
+  } catch {
+    setBoardState(teamId, { kind: 'error', error })
+    return
+  }
+  set(config, view)
+  dropRemovedBoards(view)
+  if (view.boards.some((b) => b.teamId === teamId)) setBoardState(teamId, { kind: 'error', error })
+  fixTab()
+  loadIfIdle()
+}
+
 /** A load asked for while the tab was already loading; it runs when that one ends. */
-const reloadPending: Record<TabId, boolean> = { assigned: false, board: false }
+const reloadPending: Record<TabId, boolean> = {}
 
 async function loadAssigned(): Promise<void> {
   if (read(assignedBusy)) {
@@ -732,25 +840,26 @@ async function loadAssigned(): Promise<void> {
   }
 }
 
-async function loadBoard(): Promise<void> {
-  if (read(boardBusy)) {
-    reloadPending.board = true
+async function loadBoard(teamId: string): Promise<void> {
+  const tab = boardTab(teamId)
+  if (read(boardBusy)[teamId]) {
+    reloadPending[tab] = true
     return
   }
-  set(boardBusy, true)
+  update(boardBusy, (prev) => ({ ...prev, [teamId]: true }))
   set(notice, null)
-  if (read(boardState).kind !== 'ready') set(boardState, { kind: 'loading' })
+  if (boardStateOf(teamId).kind !== 'ready') setBoardState(teamId, { kind: 'loading' })
   try {
-    showBoard(await plugin.request('board.get', undefined, { timeoutMs: REQUEST_TIMEOUT_MS }))
+    showBoard(teamId, await plugin.request('board.get', { teamId }, { timeoutMs: REQUEST_TIMEOUT_MS }))
   } catch (error) {
-    showBoard(failure(error))
+    showBoard(teamId, failure(error))
   } finally {
-    set(boardBusy, false)
+    update(boardBusy, (prev) => ({ ...prev, [teamId]: false }))
   }
-  if (read(boardState).kind === 'ready') void reloadChildren('board')
-  if (reloadPending.board) {
-    reloadPending.board = false
-    await loadBoard()
+  if (boardStateOf(teamId).kind === 'ready') void reloadChildren(tab)
+  if (reloadPending[tab]) {
+    reloadPending[tab] = false
+    await loadBoard(teamId)
   }
 }
 
@@ -770,34 +879,38 @@ async function ensureLevels(ref: BoardRef): Promise<void> {
   }
 }
 
-/** Switches the board level (Epics, Features, Stories...) and reloads the board. */
-async function chooseLevel(boardId: string, boardName: string): Promise<void> {
-  const ref = read(config)?.board
+/** Switches one board's level (Epics, Features, Stories...) and reloads that board. */
+async function chooseLevel(teamId: string, boardId: string, boardName: string): Promise<void> {
+  const boards = read(config)?.boards ?? []
+  const ref = boards.find((b) => b.teamId === teamId)
   if (!ref || ref.boardId === boardId) return
-  await savePrefs({ board: { ...ref, boardId, boardName } })
-  await loadBoard()
+  await savePrefs({ boards: boards.map((b) => (b.teamId === teamId ? { ...b, boardId, boardName } : b)) })
+  await loadBoard(teamId)
 }
 
 function loadTab(tab: TabId): Promise<void> {
-  return tab === 'board' ? loadBoard() : loadAssigned()
+  const team = teamOf(tab)
+  if (team !== null) return loadBoard(team)
+  // The no-board tab shows its empty state: nothing to load.
+  return tab === NO_BOARD ? Promise.resolve() : loadAssigned()
 }
 
 /** Reloads the tab that is shown (the refresh button, Try again, Back). */
 function load(): Promise<void> {
-  return loadTab(read(activeTab))
+  return loadTab(currentTab())
 }
 
 /** Drops what a tab shows, so it loads again when shown. */
 function invalidate(tab: TabId): void {
-  if (tab === 'board') set(boardState, { kind: 'idle' })
-  else set(assignedState, { kind: 'idle' })
+  const team = teamOf(tab)
+  if (team !== null) setBoardState(team, { kind: 'idle' })
+  else if (tab === 'assigned') set(assignedState, { kind: 'idle' })
 }
 
 function selectTab(value: string): void {
-  const tab: TabId = value === 'board' ? 'board' : 'assigned'
+  const tab = resolveTab(value, read(config))
   set(activeTab, tab)
-  const state = tab === 'board' ? read(boardState) : read(assignedState)
-  if (state.kind === 'idle' && isConnected(read(config))) void loadTab(tab)
+  if (stateOf(tab).kind === 'idle' && isConnected(read(config))) void loadTab(tab)
 }
 
 async function loadProjects(): Promise<void> {
@@ -853,12 +966,6 @@ async function loadBoards(projectId: string, teamId: string): Promise<void> {
   if (next.kind === 'ready') update(boardsCache, (prev) => ({ ...prev, [key]: next.items }))
   if (run !== boardsRun) return
   set(boardsState, next)
-  // The team's board is its Stories board, unless one was already chosen.
-  const picked = read(boardPick)
-  if (next.kind === 'ready' && picked.project?.id === projectId && picked.team?.id === teamId && !picked.board) {
-    const board = defaultBoard(next.items)
-    if (board) setPick({ ...picked, board })
-  }
 }
 
 /** Loads the teams of the chosen project and the boards of the chosen team, once each. */
@@ -869,23 +976,40 @@ function ensureBoardOptions(): void {
   if (project && team && read(boardsState)?.key !== `${project.id}/${team.id}`) void loadBoards(project.id, team.id)
 }
 
-/** Changes the Board section's choice; the draft gets a board only when all three are chosen. */
+/** Changes the project or team to add; loads the teams and the team's boards. */
 function setPick(next: BoardPick): void {
   set(boardPick, next)
-  const { project, team, board } = next
-  const ref = project && team && board
-    ? {
-        projectId: project.id,
-        projectName: project.name,
-        teamId: team.id,
-        teamName: team.name,
-        boardId: board.id,
-        boardName: board.name
-      }
-    : null
-  const edits = read(draft)
-  if (edits) set(draft, { ...edits, board: ref })
   ensureBoardOptions()
+}
+
+/**
+ * The board that Add would register for the picked team: its Stories board (else the first
+ * level), once its boards have loaded; null before, or when the team is already registered.
+ */
+function boardToAdd(): BoardRef | null {
+  const { project, team } = read(boardPick)
+  const edits = read(draft)
+  const boards = read(boardsState)
+  if (!project || !team || !edits || edits.boards.some((b) => b.teamId === team.id)) return null
+  if (boards?.key !== `${project.id}/${team.id}` || boards.kind !== 'ready') return null
+  const board = defaultBoard(boards.items)
+  return board
+    ? { projectId: project.id, projectName: project.name, teamId: team.id, teamName: team.name, boardId: board.id, boardName: board.name }
+    : null
+}
+
+/** Adds the picked team's board to the draft; the project stays picked for the next one. */
+function addBoard(): void {
+  const ref = boardToAdd()
+  const edits = read(draft)
+  if (!ref || !edits) return
+  set(draft, { ...edits, boards: [...edits.boards, ref] })
+  setPick({ project: read(boardPick).project, team: null })
+}
+
+function removeBoard(teamId: string): void {
+  const edits = read(draft)
+  if (edits) set(draft, { ...edits, boards: edits.boards.filter((b) => b.teamId !== teamId) })
 }
 
 /** Changes the config screen's draft; nothing is saved until Save. */
@@ -915,10 +1039,12 @@ async function saveDraft(): Promise<void> {
   }
   set(draft, null)
   set(screen, { kind: 'main' })
-  // The tab that is shown reloads; the other one loads when shown, if what it lists changed.
-  const listChanged = !before || listInputsChanged(before, after)
-  const other: TabId = read(activeTab) === 'board' ? 'assigned' : 'board'
-  if (listChanged || (other === 'board' && boardChanged(before, after))) invalidate(other)
+  dropRemovedBoards(after)
+  fixTab()
+  // The tab that is shown reloads; the others load when shown, if what they list changed.
+  const active = currentTab()
+  if (!before || listInputsChanged(before, after)) invalidateOthers(active)
+  else for (const team of changedTeams(before, after)) if (boardTab(team) !== active) invalidate(boardTab(team))
   await load()
 }
 
@@ -937,10 +1063,12 @@ export function refreshIfDue(now: number = Date.now()): boolean {
   const minutes = read(config)?.refreshMinutes ?? 0
   if (minutes <= 0 || read(screen).kind !== 'main' || read(busy)) return false
   if (visible && !read(visible)) return false
-  const tab = read(activeTab)
-  const state = tab === 'board' ? read(boardState) : read(assignedState)
+  const tab = currentTab()
+  const team = teamOf(tab)
+  const state = stateOf(tab)
   const fetchedAt = state.kind === 'list' ? state.fetchedAt : state.kind === 'ready' ? state.data.fetchedAt : null
-  if (fetchedAt === null || read(tab === 'board' ? boardBusy : assignedBusy)) return false
+  const loading = team === null ? read(assignedBusy) : Boolean(read(boardBusy)[team])
+  if (fetchedAt === null || loading) return false
   if (now - fetchedAt < minutes * 60_000) return false
   void loadTab(tab)
   return true
@@ -979,11 +1107,14 @@ async function connect(): Promise<void> {
   }
   if (result.ok) {
     set(draftPat, '')
-    set(config, await plugin.request('config.get'))
+    const view = await plugin.request('config.get')
+    set(config, view)
     set(screen, { kind: 'main' })
-    invalidate('board')
+    set(boardStates, {})
+    fixTab()
     showAssigned(result)
-    if (read(activeTab) === 'board') void loadBoard()
+    const team = teamOf(currentTab())
+    if (team !== null) void loadBoard(team)
   } else {
     set(formError, result.error)
   }
@@ -992,7 +1123,7 @@ async function connect(): Promise<void> {
 async function forgetPat(): Promise<void> {
   set(config, await plugin.request('pat.clear'))
   invalidate('assigned')
-  invalidate('board')
+  set(boardStates, {})
   showConfig()
 }
 
@@ -1201,7 +1332,8 @@ async function moveItem(tab: TabId, key: string, id: number, target: MoveTarget,
       closeStart()
       foldItem(key)
     }
-    invalidate(tab === 'board' ? 'assigned' : 'board')
+    // The item may also show in Assigned to me and on other boards.
+    invalidateOthers(tab)
     // The reload asks again for the open lists too, but only when it succeeds.
     await Promise.all([parentId === null ? undefined : fetchChildren(parentId), loadTab(tab)])
   } else {
@@ -1219,29 +1351,29 @@ export function setup(ctx: PanelContext): void {
     plugin.on('config.changed', (view) => {
       const before = read(config)
       set(config, view)
-      const active = read(activeTab)
       // On the config screen, or while Save or Connect runs, that call shows the result. A tab
       // that is loading reloads once its load ends (its load read the settings before).
       if (read(screen).kind === 'config' || read(busy)) {
         ensureProjects()
         return
       }
+      dropRemovedBoards(view)
+      fixTab()
+      const active = currentTab()
       // A change in Orca's Settings that alters the items reloads; a grouping change only regroups.
-      const listChanged = !before || listInputsChanged(before, view)
-      const stale: Record<TabId, boolean> = {
-        assigned: listChanged,
-        board: listChanged || boardChanged(before, view)
-      }
-      for (const tab of ['assigned', 'board'] as const) {
-        if (!stale[tab]) continue
+      const stale =
+        !before || listInputsChanged(before, view) ? tabsOf(view) : changedTeams(before, view).map(boardTab)
+      for (const tab of stale) {
         if (tab === active) void loadTab(tab)
         else invalidate(tab)
       }
+      if (!stale.includes(active)) loadIfIdle()
     })
   )
   void plugin.request('config.get').then(
     (view) => {
       set(config, view)
+      fixTab()
       if (isConnected(view)) {
         set(screen, { kind: 'main' })
         void load()
@@ -1684,6 +1816,7 @@ function OptionsSelect<T extends { id: string; name: string }>({
 function BoardSection() {
   const m = t()
   const edits = read(draft)
+  const registered = edits?.boards ?? []
   const pick = read(boardPick)
   const projects = read(projectsState)
   const teams = read(teamsState)
@@ -1692,10 +1825,17 @@ function BoardSection() {
   // Only the options that belong to the current choice (an answer for another parent is stale).
   const teamsNow = project && teams?.key === project.id ? teams : null
   const boardsNow = project && team && boards?.key === `${project.id}/${team.id}` ? boards : null
+  // A team is registered once: the ones already in the list are not offered again.
+  const teamsLeft: Options<Team> | null =
+    teamsNow && teamsNow.kind === 'ready'
+      ? { ...teamsNow, items: teamsNow.items.filter((i) => !registered.some((b) => b.teamId === i.id)) }
+      : teamsNow
+  const allAdded = teamsNow?.kind === 'ready' && teamsNow.items.length > 0 && teamsLeft?.kind === 'ready' && teamsLeft.items.length === 0
+  const toAdd = boardToAdd()
   return (
     <Collapsible
       title={m.boardSection}
-      description={boardLabelOf(edits?.board ?? null, m.boardNotChosen)}
+      description={registered.length > 0 ? registered.map((b) => b.teamName).join(', ') : m.boardNotChosen}
       open={read(boardOpen)}
       onChange={(isOpen) => {
         set(boardOpen, isOpen)
@@ -1704,6 +1844,39 @@ function BoardSection() {
       }}
     >
       <Stack gap="xs">
+        {registered.length > 0 ? (
+          <Stack gap="none">
+            {registered.map((b) => (
+              <Row key={b.teamId} align="center" justify="between" gap="xs">
+                <Box grow shrink minWidth={0}>
+                  <Row align="center" gap="xs">
+                    <Box shrink minWidth={0}>
+                      <Text size="sm" truncate>
+                        {`${b.teamName} · ${b.boardName}`}
+                      </Text>
+                    </Box>
+                    <Box shrink minWidth={0}>
+                      <Text muted size="xs" truncate>
+                        {b.projectName}
+                      </Text>
+                    </Box>
+                  </Row>
+                </Box>
+                <IconButton
+                  icon="delete"
+                  label={m.removeBoard(b.teamName)}
+                  variant="ghost"
+                  tone="danger"
+                  onPress={() => removeBoard(b.teamId)}
+                />
+              </Row>
+            ))}
+          </Stack>
+        ) : (
+          <Text muted size="xs">
+            {m.noBoardsYet}
+          </Text>
+        )}
         {projects.kind === 'idle' || projects.kind === 'loading' ? (
           <Spinner label={m.loadingProjects} />
         ) : projects.kind === 'error' ? (
@@ -1725,21 +1898,27 @@ function BoardSection() {
               options={optionsOf(pickable(projects.projects, project))}
               onChange={(value) => {
                 const next = pickable(projects.projects, project).find((p) => p.id === value)
-                if (next && next.id !== project?.id) setPick({ project: next, team: null, board: null })
+                if (next && next.id !== project?.id) setPick({ project: next, team: null })
               }}
             />
           </InlineField>
         )}
         {project ? (
-          <OptionsSelect
-            label={m.teamLabel}
-            loadingLabel={m.loadingTeams}
-            empty={m.noTeams}
-            state={teamsNow}
-            chosen={team}
-            onPick={(next) => next.id !== team?.id && setPick({ project, team: next, board: null })}
-            onRetry={() => void loadTeams(project.id)}
-          />
+          allAdded ? (
+            <Text muted size="xs">
+              {m.allTeamsAdded}
+            </Text>
+          ) : (
+            <OptionsSelect
+              label={m.teamLabel}
+              loadingLabel={m.loadingTeams}
+              empty={m.noTeams}
+              state={teamsLeft}
+              chosen={team}
+              onPick={(next) => next.id !== team?.id && setPick({ project, team: next })}
+              onRetry={() => void loadTeams(project.id)}
+            />
+          )
         ) : null}
         {project && team ? (
           <OptionsSelect
@@ -1747,11 +1926,18 @@ function BoardSection() {
             loadingLabel={m.loadingBoards}
             empty={m.noBoards}
             state={boardsNow}
-            chosen={pick.board}
+            chosen={null}
             hideSelect
             onPick={() => {}}
             onRetry={() => void loadBoards(project.id, team.id)}
           />
+        ) : null}
+        {project ? (
+          <Row justify="end">
+            <Button variant="outline" size="sm" icon="add" onPress={addBoard} disabled={!toAdd}>
+              {m.addBoard}
+            </Button>
+          </Row>
         ) : null}
       </Stack>
     </Collapsible>
@@ -1786,7 +1972,7 @@ function stateMove(item: WorkItem): MoveSpec {
 }
 
 /** Split columns offer two positions, `<id>:doing` and `<id>:done`. */
-function columnMove(item: WorkItem, columns: BoardColumn[]): MoveSpec {
+function columnMove(item: WorkItem, columns: BoardColumn[], teamId: string): MoveSpec {
   const m = t()
   const options = columns.flatMap((column) =>
     column.isSplit
@@ -1803,7 +1989,7 @@ function columnMove(item: WorkItem, columns: BoardColumn[]): MoveSpec {
     value,
     target: (choice) => {
       const [columnId = '', half] = choice.split(/:(?=doing$|done$)/)
-      return { kind: 'column', columnId, done: half === 'done' }
+      return { kind: 'column', teamId, columnId, done: half === 'done' }
     }
   }
 }
@@ -2006,7 +2192,7 @@ function SearchRow({ tab }: { tab: TabId }) {
       labelHidden
       type="search"
       placeholder={m.searchPlaceholder}
-      value={read(searchQuery)[tab]}
+      value={read(searchQuery)[tab] ?? ''}
       onChange={(value) => update(searchQuery, (prev) => ({ ...prev, [tab]: value }))}
     />
   )
@@ -2026,7 +2212,7 @@ function ListView({ items }: { items: WorkItem[] }) {
   const collapsed = read(collapsedGroups)
   const message = read(notice)
   const showProject = new Set(items.map((item) => item.project)).size > 1
-  const query = read(searchQuery).assigned
+  const query = read(searchQuery).assigned ?? ''
   const filtering = query.trim() !== ''
   const shown = filterItems(withoutClosed(items, 'list'), query)
   const groups = groupItems(shown, groupBy)
@@ -2088,7 +2274,7 @@ function Failure({ error }: { error: ListError }) {
     <Stack gap="sm">
       <ErrorBox error={error} />
       <Row gap="xs" wrap>
-        <Button onPress={() => void load()} disabled={read(assignedBusy) || read(boardBusy)}>
+        <Button onPress={() => void load()} disabled={read(assignedBusy) || Object.values(read(boardBusy)).some(Boolean)}>
           {m.tryAgain}
         </Button>
         <Button variant="ghost" onPress={() => showConfig()}>
@@ -2107,17 +2293,17 @@ function AssignedTab() {
   return <ListView items={state.items} />
 }
 
-function BoardList({ items, label }: { items: BoardItem[]; label: string }) {
-  const board = read(boardState)
+function BoardList({ teamId, items, label }: { teamId: string; items: BoardItem[]; label: string }) {
+  const board = boardStateOf(teamId)
   const columns = board.kind === 'ready' ? board.data.columns : []
   return (
     <List label={label}>
       {items.map((item) => (
         <Entry
           key={String(item.id)}
-          tab="board"
+          tab={boardTab(teamId)}
           item={item}
-          move={() => columnMove(item, columns)}
+          move={() => columnMove(item, columns, teamId)}
           description={[item.type, item.assignedTo, ...counters(item)].filter(Boolean).join(' · ')}
           current={item.mine}
         />
@@ -2127,7 +2313,7 @@ function BoardList({ items, label }: { items: BoardItem[]; label: string }) {
 }
 
 /** A split column shows Doing and Done; an empty half keeps its heading with a quiet dash. */
-function Half({ title, items, label }: { title: string; items: BoardItem[]; label: string }) {
+function Half({ teamId, title, items, label }: { teamId: string; title: string; items: BoardItem[]; label: string }) {
   const m = t()
   return (
     <Stack gap="none">
@@ -2135,7 +2321,7 @@ function Half({ title, items, label }: { title: string; items: BoardItem[]; labe
         {title}
       </Text>
       {items.length > 0 ? (
-        <BoardList items={items} label={`${label} · ${title}`} />
+        <BoardList teamId={teamId} items={items} label={`${label} · ${title}`} />
       ) : (
         <Text muted size="xs">
           {m.emptyHalf}
@@ -2145,7 +2331,7 @@ function Half({ title, items, label }: { title: string; items: BoardItem[]; labe
   )
 }
 
-function ColumnBody({ section }: { section: ColumnSection }) {
+function ColumnBody({ teamId, section }: { teamId: string; section: ColumnSection }) {
   const m = t()
   const name = section.column.name
   if (section.items.length === 0) {
@@ -2155,11 +2341,11 @@ function ColumnBody({ section }: { section: ColumnSection }) {
       </Text>
     )
   }
-  if (!section.column.isSplit) return <BoardList items={section.items} label={name} />
+  if (!section.column.isSplit) return <BoardList teamId={teamId} items={section.items} label={name} />
   return (
     <Stack gap="none">
-      <Half title={m.doing} items={section.doing} label={name} />
-      <Half title={m.done} items={section.done} label={name} />
+      <Half teamId={teamId} title={m.doing} items={section.doing} label={name} />
+      <Half teamId={teamId} title={m.done} items={section.done} label={name} />
     </Stack>
   )
 }
@@ -2170,11 +2356,12 @@ function levelOptions(current: BoardRef, boards: BoardSummary[] | undefined) {
   return list.map((b) => ({ value: b.id, label: b.name }))
 }
 
-function BoardView({ data }: { data: BoardData }) {
+function BoardView({ teamId, data }: { teamId: string; data: BoardData }) {
   const m = t()
+  const tab = boardTab(teamId)
   const collapsed = read(collapsedGroups)
   const message = read(notice)
-  const query = read(searchQuery).board
+  const query = read(searchQuery)[tab] ?? ''
   const filtering = query.trim() !== ''
   const layout = layoutBoard(data.columns, filterItems(withoutClosed(data.items, 'list'), query))
   const anyMatch = layout.other.length > 0 || layout.columns.some((section) => section.items.length > 0)
@@ -2201,7 +2388,7 @@ function BoardView({ data }: { data: BoardData }) {
         </Box>
         <Box shrink={false}>
           <Toolbar label={m.tabBoard} gap="xs">
-            <SearchButton tab="board" />
+            <SearchButton tab={tab} />
             <Box width={120} shrink={false}>
               <Select
                 label={m.boardLevel}
@@ -2210,17 +2397,17 @@ function BoardView({ data }: { data: BoardData }) {
                 options={levelOptions(data.board, levels)}
                 onChange={(value) => {
                   const next = (levels ?? []).find((b) => b.id === value)
-                  if (next) void chooseLevel(next.id, next.name)
+                  if (next) void chooseLevel(teamId, next.id, next.name)
                 }}
               />
             </Box>
-            <IconButton icon="refresh" label={m.refresh} onPress={() => void load()} disabled={read(boardBusy)} />
+            <IconButton icon="refresh" label={m.refresh} onPress={() => void load()} disabled={Boolean(read(boardBusy)[teamId])} />
             <IconButton icon="settings" label={m.settings} onPress={() => showConfig()} />
           </Toolbar>
         </Box>
       </Row>
-      <SearchRow tab="board" />
-      <StartSent tab="board" />
+      <SearchRow tab={tab} />
+      <StartSent tab={tab} />
       {message ? <Callout tone="warning">{message}</Callout> : null}
       {filtering && !anyMatch ? <NoMatches /> : null}
       <Stack gap="none">
@@ -2237,7 +2424,7 @@ function BoardView({ data }: { data: BoardData }) {
                 if (!filtering) setFolded(key, isOpen)
               }}
             >
-              <ColumnBody section={section} />
+              <ColumnBody teamId={teamId} section={section} />
             </Collapsible>
           )
         })}
@@ -2249,7 +2436,7 @@ function BoardView({ data }: { data: BoardData }) {
               if (!filtering) setFolded(otherKey, isOpen)
             }}
           >
-            <BoardList items={layout.other} label={m.other} />
+            <BoardList teamId={teamId} items={layout.other} label={m.other} />
           </Collapsible>
         ) : null}
       </Stack>
@@ -2262,35 +2449,48 @@ function BoardView({ data }: { data: BoardData }) {
   )
 }
 
-function BoardTab() {
+/** The tab shown while no board is registered. */
+function NoBoardTab() {
   const m = t()
-  const state = read(boardState)
+  return (
+    <EmptyState icon="layers" title={m.boardNotConfiguredTitle} description={m.boardNotConfiguredBody}>
+      <Button onPress={() => showConfig(true)}>{m.chooseBoard}</Button>
+    </EmptyState>
+  )
+}
+
+function BoardTab({ teamId }: { teamId: string }) {
+  const m = t()
+  const state = boardStateOf(teamId)
   if (state.kind === 'idle' || state.kind === 'loading') return <Spinner label={m.loadingBoard} />
-  if (state.kind === 'error') {
-    if (state.error.kind === 'boardNotConfigured') {
-      return (
-        <EmptyState icon="layers" title={m.boardNotConfiguredTitle} description={m.boardNotConfiguredBody}>
-          <Button onPress={() => showConfig(true)}>{m.chooseBoard}</Button>
-        </EmptyState>
-      )
-    }
-    return <Failure error={state.error} />
-  }
-  return <BoardView data={state.data} />
+  if (state.kind === 'error') return <Failure error={state.error} />
+  return <BoardView teamId={teamId} data={state.data} />
 }
 
 function Main() {
   const m = t()
   const state = read(assignedState)
-  const tab = read(activeTab)
+  const boards = read(config)?.boards ?? []
+  const tab = currentTab()
   return (
     <Tabs label={m.tabsLabel} value={tab} onChange={selectTab}>
       <Tab value="assigned" icon="check" label={m.tabAssigned(state.kind === 'list' ? state.items.length : null)}>
         {tab === 'assigned' ? <AssignedTab /> : null}
       </Tab>
-      <Tab value="board" icon="blocks" label={m.tabBoard}>
-        {tab === 'board' ? <BoardTab /> : null}
-      </Tab>
+      {boards.length === 0 ? (
+        <Tab value={NO_BOARD} icon="blocks" label={m.tabBoard}>
+          {tab === NO_BOARD ? <NoBoardTab /> : null}
+        </Tab>
+      ) : (
+        boards.map((board) => {
+          const value = boardTab(board.teamId)
+          return (
+            <Tab key={value} value={value} icon="blocks" label={boardTabLabel(board, boards)}>
+              {tab === value ? <BoardTab teamId={board.teamId} /> : null}
+            </Tab>
+          )
+        })
+      )}
     </Tabs>
   )
 }

@@ -46,7 +46,9 @@ import type {
 
 const PAT = 'pat'
 const PROJECTS = 'projects'
-const BOARD = 'board'
+const BOARDS = 'boards'
+/** The single board of 0.2.0 and earlier; read once into BOARDS, removed on the first write. */
+const LEGACY_BOARD = 'board'
 const START_PROJECTS = 'startProjects'
 const START_AGENT = 'startAgent'
 /** Always offered for a new worktree, after the kinds the person has used. */
@@ -130,6 +132,17 @@ function cleanBoard(value: unknown): BoardRef | null {
   return out as BoardRef
 }
 
+/** The well-formed boards of a stored list, once per team. */
+function cleanBoards(value: unknown): BoardRef[] {
+  if (!Array.isArray(value)) return []
+  const out: BoardRef[] = []
+  for (const raw of value) {
+    const board = cleanBoard(raw)
+    if (board && !out.some((b) => b.teamId === board.teamId)) out.push(board)
+  }
+  return out
+}
+
 /** A host error as the panel shows it: a missing capability, or Orca refusing. */
 function orcaError(method: string, error: unknown): OrcaError {
   const code = (error as { code?: unknown } | null)?.code
@@ -185,8 +198,22 @@ export default function activate(orca: OrcaWorkerApi): void {
     await orca.storage.set(PROJECTS, { all: filter.all, selected: filter.selected })
   }
 
-  async function readBoard(): Promise<BoardRef | null> {
-    return cleanBoard(await orca.storage.get(BOARD))
+  /** The registered boards; before the first write, the single board of earlier versions. */
+  async function readBoards(): Promise<BoardRef[]> {
+    const stored = await orca.storage.get(BOARDS)
+    if (stored !== undefined && stored !== null) return cleanBoards(stored)
+    const legacy = cleanBoard(await orca.storage.get(LEGACY_BOARD))
+    return legacy ? [legacy] : []
+  }
+
+  /** None is stored as [], so the legacy board never comes back. */
+  async function writeBoards(boards: BoardRef[]): Promise<void> {
+    await orca.storage.set(BOARDS, boards)
+    await orca.storage.delete(LEGACY_BOARD)
+  }
+
+  async function readBoard(teamId: string): Promise<BoardRef | null> {
+    return (await readBoards()).find((b) => b.teamId === teamId) ?? null
   }
 
   async function protection(): Promise<ConfigView['protection']> {
@@ -226,7 +253,7 @@ export default function activate(orca: OrcaWorkerApi): void {
       hideClosed: settings.hideClosed,
       hiddenStates: settings.hiddenStates,
       refreshMinutes: settings.refreshMinutes,
-      board: await readBoard()
+      boards: await readBoards()
     }
   }
 
@@ -339,8 +366,10 @@ export default function activate(orca: OrcaWorkerApi): void {
     return result
   })
 
-  orca.panels.handle('board.get', async (_input, { signal }): Promise<BoardResult> => {
-    const board = await readBoard()
+  orca.panels.handle('board.get', async (input, { signal }): Promise<BoardResult> => {
+    const teamId = str(input?.teamId)
+    if (!teamId) throw invalid('teamId is required')
+    const board = await readBoard(teamId)
     if (!board) return failure('boardNotConfigured')
     const auth = await credentials()
     if (!auth.ok) return auth
@@ -357,12 +386,13 @@ export default function activate(orca: OrcaWorkerApi): void {
 
   orca.panels.handle('item.move', async (input, { signal }): Promise<MoveResult> => {
     const move = parseMove(input)
-    if (!move) throw invalid('id must be a positive integer and target a state or a column with done')
+    if (!move) throw invalid('id must be a positive integer and target a state, or a column with teamId and done')
     const auth = await credentials()
     if (!auth.ok) return auth
     const conn = connection(auth.organization, auth.settings, await readProjects(), auth.pat)
     // The board is read only for a column target, where its absence is an error.
-    const result = await moveItem(conn, await readBoard(), move.id, move.target, fetchImpl, { signal })
+    const board = move.target.kind === 'column' ? await readBoard(move.target.teamId) : null
+    const result = await moveItem(conn, board, move.id, move.target, fetchImpl, { signal })
     if (!result.ok) logFailure('move', result.error)
     return result
   })
@@ -620,12 +650,17 @@ export default function activate(orca: OrcaWorkerApi): void {
     if (prefs.refreshMinutes !== undefined && !REFRESH_MINUTES.includes(prefs.refreshMinutes)) {
       throw invalid('refreshMinutes must be 0, 5, 15 or 30')
     }
-    if (prefs.board !== undefined && prefs.board !== null && !cleanBoard(prefs.board)) {
-      throw invalid('board must be null or have projectId, projectName, teamId, teamName, boardId and boardName')
+    if (prefs.boards !== undefined) {
+      const list: unknown = prefs.boards
+      if (!Array.isArray(list) || !list.every((b) => cleanBoard(b))) {
+        throw invalid('boards must be a list of boards with projectId, projectName, teamId, teamName, boardId and boardName')
+      }
+      if (new Set(list.map((b) => cleanBoard(b)!.teamId)).size !== list.length) {
+        throw invalid('boards must not repeat a team')
+      }
     }
 
-    if (prefs.board === null) await orca.storage.delete(BOARD)
-    else if (prefs.board !== undefined) await orca.storage.set(BOARD, cleanBoard(prefs.board)!)
+    if (prefs.boards !== undefined) await writeBoards(cleanBoards(prefs.boards))
     if (prefs.allProjects !== undefined || prefs.projects !== undefined) {
       const current = await readProjects()
       // The stored name wins for a project already stored: projects.list renames it there, and
@@ -689,8 +724,8 @@ export default function activate(orca: OrcaWorkerApi): void {
     }
     if (!sameOrganization) {
       await writeProjects(filter)
-      // The board belongs to a team of the old organization.
-      await orca.storage.delete(BOARD)
+      // The boards belong to teams of the old organization.
+      await writeBoards([])
     }
     if (organization !== current.organization) {
       await orca.settings.set('organization', organization)

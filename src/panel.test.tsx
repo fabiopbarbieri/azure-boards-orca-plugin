@@ -54,7 +54,7 @@ const configured: ConfigView = {
   hideClosed: 'off',
   hiddenStates: ['Closed', 'Done', 'Removed'],
   refreshMinutes: 5,
-  board: null
+  boards: []
 }
 const blank: ConfigView = { ...configured, organization: '', hasPat: false }
 const listed = (...items: WorkItem[]): ListResult => ({ ok: true, items, fetchedAt: Date.now() })
@@ -343,7 +343,7 @@ test('projects: ticks stay in the draft until Save, which saves them all and sho
 
   await view.press({ text: 'Save' })
   assert.deepEqual(w.state.prefs, [
-    { allProjects: false, projects: [reports], stripAreaPrefix: true, hideClosed: 'off', refreshMinutes: 5, board: null }
+    { allProjects: false, projects: [reports], stripAreaPrefix: true, hideClosed: 'off', refreshMinutes: 5, boards: [] }
   ])
   assert.ok(view.find({ label: '#1 One' }))
   assert.equal(w.state.listCalls, 2)
@@ -463,7 +463,7 @@ test('display: the prefix switch and the refresh interval are saved together', a
   assert.equal(w.state.listCalls, 1)
   await view.press({ text: 'Save' })
   assert.deepEqual(w.state.prefs, [
-    { allProjects: true, projects: [], stripAreaPrefix: false, hideClosed: 'children', refreshMinutes: 15, board: null }
+    { allProjects: true, projects: [], stripAreaPrefix: false, hideClosed: 'children', refreshMinutes: 15, boards: [] }
   ])
   assert.equal(w.state.listCalls, 2)
   assert.ok(view.find({ label: '#1 One' }))
@@ -582,7 +582,7 @@ const boardRef: BoardRef = {
   boardId: 'b-stories',
   boardName: 'Stories'
 }
-const withBoard: ConfigView = { ...configured, board: boardRef }
+const withBoard: ConfigView = { ...configured, boards: [boardRef] }
 const column = (id: string, over: Partial<BoardColumn> = {}): BoardColumn => ({
   id,
   name: id,
@@ -619,8 +619,8 @@ const boardResult = (over: Partial<Extract<BoardResult, { ok: true }>> = {}): Bo
   ...over
 })
 
-async function openBoard(view: TestPanel) {
-  await view.select({ type: 'Tabs' }, 'board')
+async function openBoard(view: TestPanel, teamId = 't-core') {
+  await view.select({ type: 'Tabs' }, `board-${teamId}`)
 }
 
 test('tabs: the Board tab loads once on first selection and the choice persists', async () => {
@@ -631,7 +631,9 @@ test('tabs: the Board tab loads once on first selection and the choice persists'
   const host = mockHost({ requests: w.requests })
   const view = await mount(panel, { host })
   assert.ok(view.find({ text: 'Assigned to me · 2' }))
-  assert.equal(view.find({ type: 'Tab', label: 'Board' })?.props.icon, 'blocks')
+  // The board's tab is named after its team.
+  assert.equal(view.find({ type: 'Tab', label: 'Core' })?.props.icon, 'blocks')
+  assert.equal(view.find({ type: 'Tab', label: 'Board' }), null)
   assert.equal(view.find({ type: 'Tab', text: /^Assigned to me/ })?.props.icon, 'check')
   assert.equal(boardCalls, 0)
   await openBoard(view)
@@ -642,7 +644,7 @@ test('tabs: the Board tab loads once on first selection and the choice persists'
   await openBoard(view)
   assert.equal(boardCalls, 1)
   assert.equal(w.state.listCalls, 1)
-  assert.equal((view.persisted.plugin as Record<string, unknown>).activeTab, 'board')
+  assert.equal((view.persisted.plugin as Record<string, unknown>).activeTab, 'board-t-core')
   clean(view, host)
   await view.unmount()
 
@@ -652,6 +654,87 @@ test('tabs: the Board tab loads once on first selection and the choice persists'
   assert.equal(w.state.listCalls, 1)
   clean(again, host)
   await again.unmount()
+})
+
+const opsRef: BoardRef = { ...boardRef, projectId: 'p-infra', projectName: 'Infra', teamId: 't-ops', teamName: 'Ops', boardId: 'b-ops' }
+const withBoards: ConfigView = { ...configured, boards: [boardRef, opsRef] }
+
+test('boards: each registered board has its own tab, loaded on its own with its team', async () => {
+  const asked: unknown[] = []
+  const moves: unknown[] = []
+  const w = worker(withBoards, listed(item(1, 'One')), {
+    'board.get': (input: { teamId: string }) => (
+      asked.push(input.teamId),
+      boardResult({ board: input.teamId === 't-ops' ? opsRef : boardRef, iteration: { name: `Sprint ${input.teamId}`, path: '' } })
+    ),
+    'item.move': (input: unknown) => (moves.push(input), { ok: true })
+  })
+  const host = mockHost({ requests: w.requests })
+  const view = await mount(panel, { host })
+  assert.ok(view.find({ type: 'Tab', label: 'Core' }))
+  assert.ok(view.find({ type: 'Tab', label: 'Ops' }))
+  assert.deepEqual(asked, [])
+  await openBoard(view, 't-ops')
+  assert.deepEqual(asked, ['t-ops'])
+  assert.ok(view.find({ text: 'Sprint t-ops' }))
+  await openBoard(view)
+  assert.deepEqual(asked, ['t-ops', 't-core'])
+  assert.ok(view.find({ text: 'Sprint t-core' }))
+  // Back on Ops: what it showed stays, no new call.
+  await openBoard(view, 't-ops')
+  assert.deepEqual(asked, ['t-ops', 't-core'])
+
+  // A move on Ops reloads Ops; Core and Assigned to me load again when shown (the item may be there too).
+  await view.press({ label: '#2 Card 2' })
+  await view.select({ type: 'Select', label: 'Move to' }, 'Review')
+  assert.deepEqual(moves, [{ id: 2, target: { kind: 'column', teamId: 't-ops', columnId: 'Review', done: false } }])
+  assert.deepEqual(asked, ['t-ops', 't-core', 't-ops'])
+  await openBoard(view)
+  assert.deepEqual(asked, ['t-ops', 't-core', 't-ops', 't-core'])
+  await view.select({ type: 'Tabs' }, 'assigned')
+  assert.equal(w.state.listCalls, 2)
+  clean(view, host)
+  await view.unmount()
+})
+
+test('boards: removing the board that is shown moves to the next one, then to Assigned to me', async () => {
+  const asked: string[] = []
+  const w = worker(withBoards, listed(item(1, 'One')), {
+    'board.get': (input: { teamId: string }) => (asked.push(input.teamId), boardResult({ board: input.teamId === 't-ops' ? opsRef : boardRef }))
+  })
+  const host = mockHost({ requests: w.requests })
+  const view = await mount(panel, { host, persisted: { plugin: { activeTab: 'board-t-core' } } })
+  assert.deepEqual(asked, ['t-core'])
+  await view.post('config.changed', { ...withBoards, boards: [opsRef] })
+  assert.equal(view.find({ type: 'Tab', label: 'Core' }), null)
+  assert.equal((view.persisted.plugin as Record<string, unknown>).activeTab, 'board-t-ops')
+  assert.deepEqual(asked, ['t-core', 't-ops'])
+  await view.post('config.changed', { ...withBoards, boards: [] })
+  assert.equal((view.persisted.plugin as Record<string, unknown>).activeTab, 'assigned')
+  assert.ok(view.find({ type: 'Tab', label: 'Board' }))
+  clean(view, host)
+  await view.unmount()
+})
+
+test('boards: a board removed elsewhere reads the config again instead of showing an empty board', async () => {
+  let config: ConfigView = withBoards
+  const w = worker(withBoards, listed(item(1, 'One')), {
+    'config.get': () => config,
+    'board.get': (input: { teamId: string }) =>
+      input.teamId === 't-ops' ? { ok: false, error: { kind: 'boardNotConfigured' } } : boardResult()
+  })
+  const host = mockHost({ requests: w.requests })
+  const view = await mount(panel, { host })
+  // Removed in another window, before this panel heard of it.
+  config = { ...withBoards, boards: [boardRef] }
+  await openBoard(view, 't-ops')
+  await view.settled()
+  assert.equal(view.find({ type: 'Tab', label: 'Ops' }), null)
+  assert.equal(view.find({ label: 'Add a team board' }), null)
+  assert.equal((view.persisted.plugin as Record<string, unknown>).activeTab, 'board-t-core')
+  assert.ok(view.find({ text: 'Sprint 7' }))
+  clean(view, host)
+  await view.unmount()
 })
 
 test('board: columns in order with counts and WIP limits, halves, folded outgoing column', async () => {
@@ -699,18 +782,22 @@ test('board: a half without items keeps its heading with a dash, and truncation 
   await view.unmount()
 })
 
-test('board: not configured offers to choose one and opens the Board section', async () => {
+test('board: with none registered, one Board tab offers to add one and opens the Boards section', async () => {
+  let boardCalls = 0
   const w = worker(configured, listed(), {
-    'board.get': { ok: false, error: { kind: 'boardNotConfigured' } },
+    'board.get': () => (boardCalls++, { ok: false, error: { kind: 'boardNotConfigured' } }),
     'projects.list': { ok: true, projects: [web], complete: true }
   })
   const host = mockHost({ requests: w.requests })
   const view = await mount(panel, { host })
-  await openBoard(view)
-  assert.ok(view.find({ label: 'Choose a team board' }))
-  await view.press({ text: 'Choose board' })
+  assert.equal(view.find({ type: 'Tab', label: 'Board' })?.props.icon, 'blocks')
+  await view.select({ type: 'Tabs' }, 'board')
+  assert.ok(view.find({ label: 'Add a team board' }))
+  assert.equal(boardCalls, 0)
+  await view.press({ text: 'Add board' })
   assert.ok(view.find({ text: 'Settings' }))
-  assert.equal(view.find({ type: 'Collapsible', text: /^Board/ })?.props.description, 'Not chosen')
+  assert.equal(view.find({ type: 'Collapsible', text: /^Boards/ })?.props.description, 'None')
+  assert.ok(view.find({ text: /^No boards yet/ }))
   assert.ok(view.find({ type: 'Select', label: 'Project' }))
   clean(view, host)
   await view.unmount()
@@ -734,14 +821,19 @@ test('board: no current iteration is an error with Try again', async () => {
 
 const teamsOf = (projectId: string) => ({ ok: true, teams: [{ id: `t-${projectId}`, name: `Team ${projectId}` }] })
 
-test('config: the Board section picks project, team and board; Save sends it', async () => {
+test('config: the Boards section adds and removes boards; Save sends the list', async () => {
   const teamCalls: unknown[] = []
   const boardCalls: unknown[] = []
   const reports: Project = { id: 'p-rep', name: 'Reports' }
   let projectCalls = 0
   const w = worker(configured, listed(), {
     'projects.list': () => (projectCalls++, { ok: true, projects: [web, reports], complete: true }),
-    'teams.list': (input: unknown) => (teamCalls.push(input), { ok: true, teams: [{ id: 't-1', name: 'Core' }] }),
+    'teams.list': (input: { projectId: string }) => (
+      teamCalls.push(input),
+      input.projectId === 'p-web'
+        ? { ok: true, teams: [{ id: 't-1', name: 'Core' }] }
+        : { ok: true, teams: [{ id: 't-2', name: 'Core' }, { id: 't-3', name: 'Billing' }] }
+    ),
     'boards.list': (input: unknown) => (
       boardCalls.push(input),
       { ok: true, boards: [{ id: 'b-2', name: 'Features' }, { id: 'b-1', name: 'Stories' }] }
@@ -751,25 +843,43 @@ test('config: the Board section picks project, team and board; Save sends it', a
   const view = await mount(panel, { host })
   await openSettings(view)
   assert.equal(projectCalls, 0)
-  await openSection(view, 'Board')
+  await openSection(view, 'Boards')
   assert.equal(projectCalls, 1)
   assert.equal(view.find({ type: 'Select', label: 'Team' }), null)
 
   await view.select({ type: 'Select', label: 'Project' }, 'p-web')
   assert.deepEqual(teamCalls, [{ projectId: 'p-web' }])
+  // Add waits for a team and its boards.
+  assert.equal(view.find({ type: 'Button', text: 'Add' })?.props.disabled, true)
   await view.select({ type: 'Select', label: 'Team' }, 't-1')
   assert.deepEqual(boardCalls, [{ projectId: 'p-web', teamId: 't-1' }])
   // No board Select: the team's Stories board is taken.
   assert.equal(view.find({ type: 'Select', label: 'Board' }), null)
-  assert.equal(view.find({ type: 'Collapsible', text: /^Board/ })?.props.description, 'Core · Stories')
+  await view.press({ type: 'Button', text: 'Add' })
+  assert.equal(view.find({ type: 'Collapsible', text: /^Boards/ })?.props.description, 'Core')
+  assert.ok(view.find({ text: 'Core · Stories' }))
+  // A team is registered once: Web has no other team left.
+  assert.ok(view.find({ text: 'Every team of this project is already added.' }))
 
-  // Changing the project clears team and board.
   await view.select({ type: 'Select', label: 'Project' }, 'p-rep')
-  assert.equal(view.find({ type: 'Collapsible', text: /^Board/ })?.props.description, 'Not chosen')
-  await view.select({ type: 'Select', label: 'Team' }, 't-1')
+  await view.select({ type: 'Select', label: 'Team' }, 't-3')
+  await view.press({ type: 'Button', text: 'Add' })
+  await view.select({ type: 'Select', label: 'Team' }, 't-2')
+  await view.press({ type: 'Button', text: 'Add' })
+  assert.equal(view.find({ type: 'Collapsible', text: /^Boards/ })?.props.description, 'Core, Billing, Core')
+  // The trash removes one; nothing is saved before Save.
+  await view.press({ label: 'Remove Billing' })
   assert.deepEqual(w.state.prefs, [])
 
   await view.press({ text: 'Save' })
+  const ref = (projectId: string, projectName: string, teamId: string, teamName: string) => ({
+    projectId,
+    projectName,
+    teamId,
+    teamName,
+    boardId: 'b-1',
+    boardName: 'Stories'
+  })
   assert.deepEqual(w.state.prefs, [
     {
       allProjects: true,
@@ -777,19 +887,16 @@ test('config: the Board section picks project, team and board; Save sends it', a
       stripAreaPrefix: true,
       hideClosed: 'off',
       refreshMinutes: 5,
-      board: {
-        projectId: 'p-rep',
-        projectName: 'Reports',
-        teamId: 't-1',
-        teamName: 'Core',
-        boardId: 'b-1',
-        boardName: 'Stories'
-      }
+      boards: [ref('p-web', 'Web', 't-1', 'Core'), ref('p-rep', 'Reports', 't-2', 'Core')]
     }
   ])
+  // Two teams named Core: their tabs carry the project.
+  assert.ok(view.find({ type: 'Tab', label: 'Core · Web' }))
+  assert.ok(view.find({ type: 'Tab', label: 'Core · Reports' }))
+  assert.equal(view.find({ type: 'Tab', label: 'Board' }), null)
 
   await openSettings(view)
-  assert.equal(view.find({ type: 'Collapsible', text: /^Board/ })?.props.description, 'Core · Stories')
+  assert.equal(view.find({ type: 'Collapsible', text: /^Boards/ })?.props.description, 'Core, Core')
   clean(view, host)
   await view.unmount()
 })
@@ -802,12 +909,14 @@ test('config: a teams.list scope error explains the missing PAT scope; Back disc
   const host = mockHost({ requests: w.requests })
   const view = await mount(panel, { host })
   await openSettings(view)
-  await openSection(view, 'Board')
+  await openSection(view, 'Boards')
+  await view.select({ type: 'Select', label: 'Project' }, 'p-web')
   assert.ok(view.find({ text: /Project and Team \(Read\)/ }))
+  await view.press({ label: 'Remove Core' })
   await view.press({ text: 'Back' })
   assert.deepEqual(w.state.prefs, [])
   await openSettings(view)
-  assert.equal(view.find({ type: 'Collapsible', text: /^Board/ })?.props.description, 'Core · Stories')
+  assert.equal(view.find({ type: 'Collapsible', text: /^Boards/ })?.props.description, 'Core')
   clean(view, host)
   await view.unmount()
 })
@@ -834,7 +943,7 @@ test('a board change from the worker reloads the Board tab, and invalidates it w
   const w = worker(withBoard, listed(item(1, 'One')), { 'board.get': () => (boardCalls++, boardResult()) })
   const host = mockHost({ requests: w.requests })
   const view = await mount(panel, { host })
-  const other = { ...withBoard, board: { ...boardRef, boardId: 'b-2', boardName: 'Features' } }
+  const other = { ...withBoard, boards: [{ ...boardRef, boardId: 'b-2', boardName: 'Features' }] }
   // Hidden: nothing is fetched until the tab is shown.
   await view.post('config.changed', other)
   assert.equal(boardCalls, 0)
@@ -856,9 +965,9 @@ test('speaks Brazilian Portuguese on the Board tab and in its settings', async (
   const host = mockHost({ requests: w.requests })
   const view = await mount(panel, { host, locale: 'pt-BR' })
   await view.select({ type: 'Tabs' }, 'board')
-  assert.ok(view.find({ label: 'Escolha o board do time' }))
-  await view.press({ text: 'Escolher board' })
-  assert.equal(view.find({ type: 'Collapsible', text: /^Board/ })?.props.description, 'Não escolhido')
+  assert.ok(view.find({ label: 'Adicione o board de um time' }))
+  await view.press({ text: 'Adicionar board' })
+  assert.equal(view.find({ type: 'Collapsible', text: /^Boards/ })?.props.description, 'Nenhum')
   assert.ok(view.find({ type: 'Select', label: 'Projeto' }))
   clean(view, host)
   await view.unmount()
@@ -896,7 +1005,7 @@ test('board header: the level Select lists boards in level order and saves the c
   assert.equal(boardCalls, 1)
 
   await view.select({ label: 'Board level' }, 'b-features')
-  assert.deepEqual(w.state.prefs, [{ board: { ...boardRef, boardId: 'b-features', boardName: 'Features' } }])
+  assert.deepEqual(w.state.prefs, [{ boards: [{ ...boardRef, boardId: 'b-features', boardName: 'Features' }] }])
   assert.equal(boardCalls, 2)
   clean(view, host)
   await view.unmount()
@@ -1026,12 +1135,12 @@ test('actions: Move to a Done half sends the column and the half, and reloads th
     'Closed'
   ])
   await view.select({ type: 'Select', label: 'Move to' }, 'Doing:done')
-  assert.deepEqual(moves, [{ id: 2, target: { kind: 'column', columnId: 'Doing', done: true } }])
+  assert.deepEqual(moves, [{ id: 2, target: { kind: 'column', teamId: 't-core', columnId: 'Doing', done: true } }])
   assert.equal(boardCalls, 2)
   // A plain column sends done: false.
   await view.press({ label: '#2 Card 2' })
   await view.select({ type: 'Select', label: 'Move to' }, 'Review')
-  assert.deepEqual(moves[1], { id: 2, target: { kind: 'column', columnId: 'Review', done: false } })
+  assert.deepEqual(moves[1], { id: 2, target: { kind: 'column', teamId: 't-core', columnId: 'Review', done: false } })
   clean(view, host)
   await view.unmount()
 })

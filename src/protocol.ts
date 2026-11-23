@@ -41,7 +41,10 @@ export type GroupBy = 'none' | 'state' | 'boardColumn'
  */
 export type HideClosed = 'off' | 'children' | 'all'
 
-/** The team board the Board view shows, chosen in the config screen. */
+/**
+ * A team board registered in the config screen; each one gets its own tab. A team is registered
+ * once: `teamId` identifies the entry, and `boardId` is the level its tab shows.
+ */
 export type BoardRef = {
   projectId: string
   projectName: string
@@ -95,8 +98,8 @@ export type BoardResult =
 export type MoveTarget =
   /** Another state of the item's type (Assigned to me). */
   | { kind: 'state'; state: string }
-  /** A column of the chosen team board, and for a split column its Done half (Board). */
-  | { kind: 'column'; columnId: string; done: boolean }
+  /** A column of a registered team board, and for a split column its Done half (a board tab). */
+  | { kind: 'column'; teamId: string; columnId: string; done: boolean }
 
 export type MoveResult = { ok: true } | { ok: false; error: ListError }
 
@@ -184,7 +187,7 @@ export type ErrorKind =
   | 'network'
   /** Any other answer the plugin did not expect. */
   | 'server'
-  /** The Board view has no team board chosen yet. */
+  /** No team board is registered, or not the one asked for (it was removed). */
   | 'boardNotConfigured'
   /** The chosen team has no current iteration (none covers today's date). */
   | 'noCurrentIteration'
@@ -226,14 +229,14 @@ export type ConfigView = {
   hiddenStates: string[]
   /** Minutes between automatic reloads while the panel is visible; 0 is off. */
   refreshMinutes: number
-  /** The team board of the Board view; null until chosen. */
-  board: BoardRef | null
+  /** The registered team boards, in tab order; one tab each. */
+  boards: BoardRef[]
 }
 
 export type Prefs = Partial<
   Pick<
     ConfigView,
-    'allProjects' | 'projects' | 'groupBy' | 'stripAreaPrefix' | 'hideClosed' | 'refreshMinutes' | 'board'
+    'allProjects' | 'projects' | 'groupBy' | 'stripAreaPrefix' | 'hideClosed' | 'refreshMinutes' | 'boards'
   >
 >
 
@@ -258,10 +261,10 @@ declare module 'orca' {
     'teams.list': { input: { projectId: string }; output: TeamsResult }
     /** The boards of a team (one per backlog level), for the board picker. */
     'boards.list': { input: { projectId: string; teamId: string }; output: BoardsResult }
-    /** The chosen team board: its columns and every item of the current iteration on it. */
-    'board.get': { output: BoardResult }
+    /** A registered team board: its columns and every item of the current iteration on it. */
+    'board.get': { input: { teamId: string }; output: BoardResult }
     /**
-     * Moves a work item: to a state, or to a column of the chosen board (which also sets the
+     * Moves a work item: to a state, or to a column of a registered board (which also sets the
      * state that column maps the item's type to). Needs Work Items (Read & write).
      */
     'item.move': { input: { id: number; target: MoveTarget }; output: MoveResult }
