@@ -3,7 +3,7 @@
   "id": "azure-boards",
   "publisher": "fabiopbarbieri",
   "name": "Azure Boards",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Your Azure Boards work items (Azure DevOps Services) in Orca: what is assigned to you and your teams' boards, one tab each. Search, move items between states and columns, and start work on one with a coding agent.",
   "license": "MIT",
   "author": {
