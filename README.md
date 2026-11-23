@@ -213,10 +213,18 @@ The panel (`src/panel.tsx`) and the worker (`src/worker.ts`) share one contract,
 ### Releasing
 
 1. Bump `version` in `orca-plugin.json` and commit.
-2. Tag the commit `vX.Y.Z` (same version) and push the branch and the tag.
+2. Tag the commit with an annotated tag, `git tag -m vX.Y.Z vX.Y.Z` (same version), and push the branch and the tag.
 3. `orca plugin install fabiopbarbieri/azure-boards-orca-plugin` installs the newest tag. The [community catalog](https://orca.dev/plugins/fabiopbarbieri/azure-boards-orca-plugin) picks the tag up on its next sync, because the repository has the `orca-plugin` topic. Notes from the catalog's checks show on that page.
 
 A dev-loaded copy and an installed copy share the plugin id, so they also share settings, the stored PAT and storage.
+
+### Catalog images
+
+`assets/cover.png` (1600×1000) and `assets/screenshots/*.png` (1280×800) show made-up data, never a real organization. They are made from a throwaway demo plugin kept outside the repository: a copy of `src/panel.tsx` (forced to English, opening on one scene) over a worker that only answers with fake data, with a different id (`azure-boards-demo`) and only `settings:own` and `storage:own`. `orca plugin shot <demo key>` captures the live panel, and a small HTML page rendered by headless Chrome puts it next to the caption. Every edit to the demo changes its fingerprint, so it needs `orca plugin dev load . --approve <fingerprint>` again; unload it afterwards.
+
+### Panel layout
+
+A components panel cannot know its own width, and `Tabs` holds only `Tab`. Keep the top tab bar fixed (Assigned to me, Boards): a list that grows, such as the added boards, goes in a wrapping row of buttons, which fits any sidebar width. Check a layout change with `orca plugin shot --width 360`.
 
 ## License
 
