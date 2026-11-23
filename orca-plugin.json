@@ -12,7 +12,7 @@
   "repository": "https://github.com/fabiopbarbieri/azure-boards-orca-plugin",
   "cover": {
     "path": "assets/cover.png",
-    "alt": "Azure Boards for Orca: the team board and the Start work form in Orca's sidebar"
+    "alt": "Azure Boards for Orca: a team board and the Start work form in Orca's sidebar"
   },
   "screenshots": [
     {
