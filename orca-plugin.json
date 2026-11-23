@@ -4,7 +4,7 @@
   "publisher": "fabiopbarbieri",
   "name": "Azure Boards",
   "version": "0.3.0",
-  "description": "Your Azure Boards work items (Azure DevOps Services) in Orca: what is assigned to you and your teams' boards, one tab each. Search, move items between states and columns, and start work on one with a coding agent.",
+  "description": "Your Azure Boards work items (Azure DevOps Services) in Orca: what is assigned to you and your teams' boards. Search, move items between states and columns, and start work on one with a coding agent.",
   "license": "MIT",
   "author": {
     "name": "fabiopbarbieri"
@@ -129,6 +129,13 @@
         "enum": ["off", "children", "all"],
         "enumLabels": ["Off", "In child lists only", "Everywhere"],
         "description": "Leaves out items in a completed state, such as Closed or Done: only from an item's child list, or from every list."
+      },
+      {
+        "key": "hideAssigned",
+        "title": "Hide the Assigned to me tab",
+        "type": "boolean",
+        "default": false,
+        "description": "Shows only the boards you added. You can also change it in the panel's settings."
       },
       {
         "key": "refreshMinutes",

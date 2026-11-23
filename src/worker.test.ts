@@ -81,6 +81,7 @@ test('reports the config without the PAT', async () => {
     groupBy: 'boardColumn',
     stripAreaPrefix: false,
     hideClosed: 'off',
+    hideAssigned: false,
     hiddenStates: ['Closed', 'Done'],
     refreshMinutes: 5,
     boards: []
@@ -102,6 +103,7 @@ test('config.get defaults: every project, grouped by state, area prefix stripped
     groupBy: 'state',
     stripAreaPrefix: true,
     hideClosed: 'off',
+    hideAssigned: false,
     hiddenStates: [],
     refreshMinutes: 5,
     boards: []
@@ -177,6 +179,7 @@ test('saves the organization and PAT only after Azure DevOps accepts them', asyn
     groupBy: 'state',
     stripAreaPrefix: true,
     hideClosed: 'off',
+    hideAssigned: false,
     hiddenStates: [],
     refreshMinutes: 5,
     boards: []
@@ -356,6 +359,7 @@ test('prefs.set stores the projects and the preferences, and posts the new view'
     groupBy: 'boardColumn',
     stripAreaPrefix: false,
     hideClosed: 'off',
+    hideAssigned: false,
     hiddenStates: [],
     refreshMinutes: 5,
     boards: []
@@ -378,6 +382,9 @@ test('prefs.set stores the projects and the preferences, and posts the new view'
   const hiding = await worker.request('prefs.set', { hideClosed: 'children' })
   assert.equal(hiding.hideClosed, 'children')
   assert.equal(host.data().settings.hideClosed, 'children')
+  const hidden = await worker.request('prefs.set', { hideAssigned: true })
+  assert.equal(hidden.hideAssigned, true)
+  assert.equal(host.data().settings.hideAssigned, true)
   assertNoLeak(worker, view)
   assert.deepEqual(worker.refusals, [])
   await worker.deactivate()
@@ -390,6 +397,7 @@ test('prefs.set refuses invalid values with invalid_params and writes nothing', 
     { groupBy: 'weird', allProjects: false },
     { stripAreaPrefix: 'yes' },
     { hideClosed: 'sometimes' },
+    { hideAssigned: 'yes' },
     { allProjects: 1 },
     { projects: 'Web' }
   ]) {

@@ -225,6 +225,8 @@ export type ConfigView = {
   stripAreaPrefix: boolean
   /** Completed items left out of the lists; applied by the panel, so changing it needs no reload. */
   hideClosed: HideClosed
+  /** Hide the Assigned to me tab: the panel shows only the boards. */
+  hideAssigned: boolean
   /** States left out of the list (Orca's Settings only); here so the panel knows when to reload. */
   hiddenStates: string[]
   /** Minutes between automatic reloads while the panel is visible; 0 is off. */
@@ -236,7 +238,7 @@ export type ConfigView = {
 export type Prefs = Partial<
   Pick<
     ConfigView,
-    'allProjects' | 'projects' | 'groupBy' | 'stripAreaPrefix' | 'hideClosed' | 'refreshMinutes' | 'boards'
+    'allProjects' | 'projects' | 'groupBy' | 'stripAreaPrefix' | 'hideClosed' | 'hideAssigned' | 'refreshMinutes' | 'boards'
   >
 >
 

@@ -28,7 +28,7 @@ Azure DevOps Services (`https://dev.azure.com/<organization>`) only. It needs no
 | | |
 |---|---|
 | **Assigned to me** | Your open work items, newest change first, grouped by state, by board column or not at all. |
-| **Boards** | One tab per team board you add, across projects, for the team's current iteration: real columns and order, Doing/Done halves, WIP limits (`In Progress · 3/7`), your items highlighted, and a switch between the Epics, Features and Stories boards. |
+| **Boards** | Every team board you add, across projects, one click apart in the **Boards** tab, for the team's current iteration: real columns and order, Doing/Done halves, WIP limits (`In Progress · 3/7`), your items highlighted, and a switch between the Epics, Features and Stories boards. |
 | **At a glance** | The type's icon, child tasks done (`📋 1/4`) and linked GitHub pull requests (`2 PRs`) on every item. |
 | **Search** | Filter any tab by number (`123`, `#123`) or by part of the title, ignoring case and accents. |
 | **Move to** | Change an item's state, or its board column and Doing/Done half, without leaving Orca. |
@@ -53,12 +53,12 @@ Azure DevOps Services (`https://dev.azure.com/<organization>`) only. It needs no
    | Scope | Unlocks |
    |---|---|
    | **Work Items (Read)** | Required: every tab, search and Start work. |
-   | **Project and Team (Read)** | The full project list in the project filter, and the team picker for the board tabs. |
+   | **Project and Team (Read)** | The full project list in the project filter, and the team picker for the boards. |
    | **Work Items (Read & write)** | **Move to**. |
 
 3. **Connect.** Open the **Azure Boards** panel, enter the **organization** (its name, or paste the URL) and the **PAT**, and press **Connect**. Nothing is saved until Azure DevOps accepts them.
 
-4. **Add boards** (optional). In the panel's settings, under **Boards**, pick a project and a team and press **Add**; repeat for every team you follow, in any project, then press **Save**. Each board gets its own tab, named after its team.
+4. **Add boards** (optional). In the panel's settings, under **Boards**, pick a project and a team and press **Add**; repeat for every team you follow, in any project, then press **Save**. The **Boards** tab shows them, with a button per team to switch.
 
 ## Using the panel
 
@@ -70,7 +70,9 @@ Each line shows the number and title, then the type, the state or column, child 
 
 ### Boards
 
-Each board you add has its own tab, named after the team (with the project too when two teams share a name). It shows the team's current iteration with every item on it, not only yours. Columns keep the board's order and WIP limits; a split column shows its **Doing** and **Done** halves; done columns start folded. Your own items are highlighted. The menu next to the toolbar switches between the team's **Epics**, **Features** and **Stories** boards, and each tab remembers its own. A tab loads when you first open it. With no board added, a single **Board** tab offers to add one.
+The **Boards** tab shows the boards you added. With more than one, a row of buttons above the board switches between them: one per team, named after it (with the project too when two teams share a name), wrapping to more lines in a narrow sidebar. The tab opens the board you looked at last. A board shows the team's current iteration with every item on it, not only yours. Columns keep the board's order and WIP limits; a split column shows its **Doing** and **Done** halves; done columns start folded. Your own items are highlighted. The menu next to the toolbar switches between the team's **Epics**, **Features** and **Stories** boards, and each board remembers its own. A board loads when you first open it. With no board added, the tab offers to add one.
+
+If you only use the boards, turn on **Hide the Assigned to me tab** under **Display**: the panel then shows the boards alone, without the tab bar.
 
 ### Item actions
 
@@ -80,7 +82,7 @@ Click an item to open its actions; click it again, or the close button, to fold 
 |---|---|
 | 🌐 **Open in browser** | Opens the item in Azure DevOps in your system browser. The first time, Orca asks before it opens `dev.azure.com`. |
 | **Start work** | Sends the item to a coding agent. See [Start work](#start-work). |
-| **Move to** | **Assigned to me**: another state of the item's type. **A board tab**: another column of that board, or the Doing or Done half of a split column; the state follows the column, as on the board. The tab reloads afterwards, and the other tabs when you open them. If Azure DevOps refuses (a state transition or a rule of your process), its message shows in the item. |
+| **Move to** | **Assigned to me**: another state of the item's type. **A board**: another column of that board, or the Doing or Done half of a split column; the state follows the column, as on the board. The board reloads afterwards, and the other lists when you open them. If Azure DevOps refuses (a state transition or a rule of your process), its message shows in the item. |
 | 📋 **Children** | Shown on an item with child work items (`📋 done/total`): lists them under the item, loaded when you open it. Each child has the same actions and, if it has children of its own, opens them too (Epic → Feature → Story → Task). |
 
 ### Search, folding and refresh
@@ -115,7 +117,7 @@ Open the panel's **Settings** (gear icon). Each section folds and shows its curr
 | **Connection** | The organization and the PAT. To change either, delete the stored PAT with the trash button and connect again. The PAT is not part of Save. |
 | **Projects** | **All projects** (including ones you gain access to later), or only the ones you tick. Only projects you can access are listed. |
 | **Boards** | The team boards that get a tab: pick a project and a team and press **Add**; the trash button removes one. Each team can be added once. |
-| **Display** | Remove the area prefix from titles; hide completed items (off, in child lists only, or everywhere). |
+| **Display** | Remove the area prefix from titles; hide completed items (off, in child lists only, or everywhere); hide the Assigned to me tab. |
 | **Refresh** | How often the visible tab reloads: off, 5, 15 or 30 minutes. |
 
 ### In Orca's Settings
@@ -127,7 +129,8 @@ Under **Settings → Plugins → Azure Boards** (labels in English: Orca does no
 | Organization | empty | The name in `https://dev.azure.com/<organization>`. |
 | Group work items by | State | No grouping, State or Board column. Same as the panel's menu. |
 | Remove the area prefix from titles | on | Hides a leading `[...]` that matches a segment of the item's area path. In `[Web Team \| 1234 \| Service]` only the area goes: `[1234 \| Service]`. `[BUG]` stays. |
-| Hide completed items | Off | **In child lists only** leaves completed children (state category Completed, such as Closed or Done) out of an item's child list and says how many are hidden. **Everywhere** also leaves them out of **Assigned to me** and the board tabs. |
+| Hide completed items | Off | **In child lists only** leaves completed children (state category Completed, such as Closed or Done) out of an item's child list and says how many are hidden. **Everywhere** also leaves them out of **Assigned to me** and the boards. |
+| Hide the Assigned to me tab | off | Shows only the boards you added, without the tab bar. |
 | Refresh every | 5 minutes | Off, 5, 15 or 30 minutes, while the panel is visible. |
 | Hidden states | `Closed, Done, Removed` | Comma-separated states left out of **Assigned to me**. Adjust it to your process. |
 
@@ -168,7 +171,7 @@ The plugin runs as a `trusted-worker`: a Node.js process with your user's access
 
 - Azure DevOps Services only; Azure DevOps Server (on-premises) is not supported.
 - Up to 200 items per tab.
-- Grouping **Assigned to me** by board column orders columns by state category, which is close to, but not always exactly, a board's order. The board tabs use the real order.
+- Grouping **Assigned to me** by board column orders columns by state category, which is close to, but not always exactly, a board's order. The boards use the real order.
 - Type icons are Orca's icons matched to Azure DevOps icon names, not the Azure DevOps artwork.
 - The agent list for a new worktree cannot tell which agents are installed: Orca does not expose that to plugins.
 - Behind a proxy that requires configuration, Node's `fetch` may not use it; this has not been tested.
@@ -183,7 +186,7 @@ The panel never touches the network: it asks the plugin's worker with `plugin.re
 | Feature | Calls |
 |---|---|
 | Assigned to me | `POST {org}/_apis/wit/wiql` (filtered by project when you chose some), then `POST {org}/_apis/wit/workitemsbatch` for the fields. |
-| Board tabs | `GET {org}/{project}/{team}/_apis/work/boards/{board}` (columns, splits, WIP limits, the board's column fields), `.../work/teamsettings/iterations?$timeframe=current`, `.../work/teamsettings/teamfieldvalues`, then a team-scoped WIQL query and `workitemsbatch`. |
+| Boards | `GET {org}/{project}/{team}/_apis/work/boards/{board}` (columns, splits, WIP limits, the board's column fields), `.../work/teamsettings/iterations?$timeframe=current`, `.../work/teamsettings/teamfieldvalues`, then a team-scoped WIQL query and `workitemsbatch`. |
 | Counters | `workitemsbatch` with `$expand=relations`: child links and GitHub pull request links. |
 | Icons and state order | `GET {org}/{project}/_apis/wit/workitemtypes`, cached for an hour. |
 | Move to | `PATCH {org}/_apis/wit/workitems/{id}` (`application/json-patch+json`): `System.State`, plus the board's column and Done fields for a column. |
@@ -232,7 +235,7 @@ Só Azure DevOps Services (`https://dev.azure.com/<organização>`). Não precis
 | | |
 |---|---|
 | **Atribuídos a mim** | Seus work items abertos, do mais recente para o mais antigo, agrupados por estado, por coluna do board ou sem agrupamento. |
-| **Boards** | Uma aba para cada board de time que você adicionar, de qualquer projeto, na iteração atual do time: colunas e ordem reais, metades Em andamento/Concluído, limites de WIP (`In Progress · 3/7`), seus itens destacados e troca entre os boards Epics, Features e Stories. |
+| **Boards** | Todos os boards de time que você adicionar, de qualquer projeto, a um clique na aba **Boards**, na iteração atual do time: colunas e ordem reais, metades Em andamento/Concluído, limites de WIP (`In Progress · 3/7`), seus itens destacados e troca entre os boards Epics, Features e Stories. |
 | **Num relance** | Ícone do tipo, tarefas filhas concluídas (`📋 1/4`) e PRs do GitHub vinculados (`2 PRs`) em cada item. |
 | **Busca** | Filtra qualquer aba pelo número (`123`, `#123`) ou por um trecho do título, sem diferenciar maiúsculas nem acentos. |
 | **Mover para** | Muda o estado do item, ou a coluna do board e a metade Em andamento/Concluído, sem sair do Orca. |
@@ -257,18 +260,20 @@ Só Azure DevOps Services (`https://dev.azure.com/<organização>`). Não precis
    | Escopo | Libera |
    |---|---|
    | **Work Items (Read)** | Obrigatório: todas as abas, a busca e o Iniciar trabalho. |
-   | **Project and Team (Read)** | A lista completa de projetos no filtro e a escolha do time para as abas de board. |
+   | **Project and Team (Read)** | A lista completa de projetos no filtro e a escolha do time para os boards. |
    | **Work Items (Read & write)** | **Mover para**. |
 
 3. **Conecte.** Abra o painel **Azure Boards**, informe a **organização** (o nome ou a URL) e o **PAT** e clique em **Conectar**. Nada é salvo antes de o Azure DevOps aceitar.
 
-4. **Adicione boards** (opcional). Nas configurações do painel, em **Boards**, escolha um projeto e um time e clique em **Adicionar**; repita para cada time que você acompanha, de qualquer projeto, e clique em **Salvar**. Cada board ganha uma aba com o nome do time.
+4. **Adicione boards** (opcional). Nas configurações do painel, em **Boards**, escolha um projeto e um time e clique em **Adicionar**; repita para cada time que você acompanha, de qualquer projeto, e clique em **Salvar**. A aba **Boards** mostra todos, com um botão por time para alternar.
 
 ### Usando o painel
 
 **Atribuídos a mim.** Todos os work items abertos atribuídos a você, até 200, do mais recente para o mais antigo. O menu da barra agrupa por **estado** (na ordem do processo: proposto, em andamento, resolvido, concluído), por **coluna do board** ou sem agrupamento. Os estados em **Hidden states** (Closed, Done e Removed por padrão) ficam de fora.
 
-**Boards.** Cada board adicionado tem uma aba com o nome do time (e o projeto junto, quando dois times têm o mesmo nome). Ela mostra a iteração atual do time com todos os itens, não só os seus. As colunas seguem a ordem e os limites de WIP do board; coluna dividida mostra as metades **Em andamento** e **Concluído**; colunas de concluído começam recolhidas. Seus itens ficam destacados. O menu ao lado da barra alterna entre os boards **Epics**, **Features** e **Stories** do time, e cada aba lembra o seu. A aba carrega quando você a abre pela primeira vez. Sem nenhum board adicionado, uma aba **Board** única oferece adicionar um.
+**Boards.** A aba **Boards** mostra os boards adicionados. Com mais de um, uma linha de botões acima do board alterna entre eles: um por time, com o nome dele (e o projeto junto, quando dois times têm o mesmo nome), quebrando em mais linhas numa barra lateral estreita. A aba abre o último board que você viu. O board mostra a iteração atual do time com todos os itens, não só os seus. As colunas seguem a ordem e os limites de WIP do board; coluna dividida mostra as metades **Em andamento** e **Concluído**; colunas de concluído começam recolhidas. Seus itens ficam destacados. O menu ao lado da barra alterna entre os boards **Epics**, **Features** e **Stories** do time, e cada board lembra o seu. O board carrega quando você o abre pela primeira vez. Sem nenhum board adicionado, a aba oferece adicionar um.
+
+Se você só usa os boards, ligue **Ocultar a aba Atribuídos a mim** em **Exibição**: o painel passa a mostrar só os boards, sem a barra de abas.
 
 **Ações do item.** Clique num item para abrir as ações; clique de novo nele, ou no botão de fechar, para recolher.
 
@@ -276,7 +281,7 @@ Só Azure DevOps Services (`https://dev.azure.com/<organização>`). Não precis
 |---|---|
 | 🌐 **Abrir no navegador** | Abre o item no Azure DevOps no navegador do sistema. Na primeira vez, o Orca pede confirmação para abrir o `dev.azure.com`. |
 | **Iniciar trabalho** | Manda o item para um agente de código. Veja [Iniciar trabalho](#iniciar-trabalho). |
-| **Mover para** | **Atribuídos a mim**: outro estado do tipo do item. **Aba de board**: outra coluna daquele board, ou a metade Em andamento ou Concluído de uma coluna dividida; o estado acompanha a coluna, como no board. A aba recarrega em seguida, e as outras quando você as abrir. Se o Azure DevOps recusar (transição de estado ou regra do processo), a mensagem dele aparece no item. |
+| **Mover para** | **Atribuídos a mim**: outro estado do tipo do item. **Board**: outra coluna daquele board, ou a metade Em andamento ou Concluído de uma coluna dividida; o estado acompanha a coluna, como no board. O board recarrega em seguida, e as outras listas quando você as abrir. Se o Azure DevOps recusar (transição de estado ou regra do processo), a mensagem dele aparece no item. |
 | 📋 **Filhos** | Aparece num item com work items filhos (`📋 concluídos/total`): lista os filhos abaixo do item, carregados quando você abre. Cada filho tem as mesmas ações e, se tiver filhos, abre os dele também (Epic → Feature → Story → Task). |
 
 **Busca, recolher e atualizar.** A **lupa** abre a busca; grupos e colunas com resultado abrem durante a busca, e fechar a lupa limpa a busca, sem consultar o Azure de novo. Grupos e colunas recolhem, e o painel lembra quais você recolheu. **Atualizar** recarrega a aba visível na hora; ela também recarrega sozinha a cada 5 minutos com o painel visível.
@@ -305,10 +310,10 @@ O painel lembra qual projeto do Orca você usou para cada projeto do Azure DevOp
 | **Conexão** | A organização e o PAT. Para trocar, apague o PAT guardado com a lixeira e conecte de novo. O PAT não entra no Salvar. |
 | **Projetos** | **Todos os projetos** (inclusive os que você ganhar acesso depois) ou só os marcados. Só aparecem projetos a que você tem acesso. |
 | **Boards** | Os boards de time que ganham aba: escolha um projeto e um time e clique em **Adicionar**; a lixeira remove. Cada time entra uma vez só. |
-| **Exibição** | Remover o prefixo da área dos títulos; ocultar concluídos (desligado, só nas listas de filhos ou em tudo). |
+| **Exibição** | Remover o prefixo da área dos títulos; ocultar concluídos (desligado, só nas listas de filhos ou em tudo); ocultar a aba Atribuídos a mim. |
 | **Atualização** | De quanto em quanto tempo a aba visível recarrega: desligado, 5, 15 ou 30 minutos. |
 
-**Nas Configurações do Orca**, em **Configurações → Plugins → Azure Boards** (rótulos em inglês: o Orca ainda não traduz configurações de plugins), ficam as mesmas opções de agrupamento, prefixo, concluídos e atualização, além de **Hidden states**: os estados, separados por vírgula, que ficam fora de **Atribuídos a mim**. Ajuste ao seu processo.
+**Nas Configurações do Orca**, em **Configurações → Plugins → Azure Boards** (rótulos em inglês: o Orca ainda não traduz configurações de plugins), ficam as mesmas opções de agrupamento, prefixo, concluídos, aba Atribuídos a mim e atualização, além de **Hidden states**: os estados, separados por vírgula, que ficam fora de **Atribuídos a mim**. Ajuste ao seu processo.
 
 ### Permissões e privacidade
 
@@ -337,7 +342,7 @@ O plugin roda como `trusted-worker` (um processo Node.js com o acesso do seu usu
 
 - Só Azure DevOps Services; o Azure DevOps Server (on-premises) não é suportado.
 - Até 200 itens por aba.
-- Agrupar **Atribuídos a mim** por coluna do board ordena as colunas pela categoria do estado, o que fica perto, mas nem sempre igual, à ordem do board. As abas de board usam a ordem real.
+- Agrupar **Atribuídos a mim** por coluna do board ordena as colunas pela categoria do estado, o que fica perto, mas nem sempre igual, à ordem do board. Os boards usam a ordem real.
 - Os ícones de tipo são ícones do Orca associados aos nomes de ícone do Azure DevOps, não a arte do Azure DevOps.
 - A lista de agentes do worktree novo não sabe quais agentes estão instalados: o Orca não expõe isso para plugins.
 - Atrás de um proxy que exige configuração, o `fetch` do Node pode não usá-lo; isso não foi testado.

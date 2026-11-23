@@ -13,6 +13,7 @@ const configured: ConfigView = {
   groupBy: 'none',
   stripAreaPrefix: true,
   hideClosed: 'off',
+  hideAssigned: false,
   hiddenStates: ['Closed', 'Done', 'Removed'],
   refreshMinutes: 5,
   boards: []
@@ -135,6 +136,13 @@ export default defineCheck({
       'boards.list': { ok: true, boards: [{ id: 'b-stories', name: 'Stories' }] }
     },
     persisted: { plugin: { activeTab: 'board-t-core' } }
+  },
+  boardsOnly: {
+    requests: {
+      'config.get': { ...withBoards, hideAssigned: true },
+      'board.get': board,
+      'boards.list': { ok: true, boards: [{ id: 'b-stories', name: 'Stories' }] }
+    }
   },
   boardNotConfigured: {
     requests: {

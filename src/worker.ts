@@ -71,6 +71,7 @@ type Settings = {
   groupBy: GroupBy
   stripAreaPrefix: boolean
   hideClosed: HideClosed
+  hideAssigned: boolean
   refreshMinutes: number
 }
 
@@ -181,6 +182,7 @@ export default function activate(orca: OrcaWorkerApi): void {
       groupBy: isGroupBy(all.groupBy) ? all.groupBy : 'state',
       stripAreaPrefix: typeof all.stripAreaPrefix === 'boolean' ? all.stripAreaPrefix : true,
       hideClosed: isHideClosed(all.hideClosed) ? all.hideClosed : 'off',
+      hideAssigned: all.hideAssigned === true,
       refreshMinutes: REFRESH_MINUTES.includes(all.refreshMinutes as number)
         ? (all.refreshMinutes as number)
         : DEFAULT_REFRESH_MINUTES
@@ -251,6 +253,7 @@ export default function activate(orca: OrcaWorkerApi): void {
       groupBy: settings.groupBy,
       stripAreaPrefix: settings.stripAreaPrefix,
       hideClosed: settings.hideClosed,
+      hideAssigned: settings.hideAssigned,
       hiddenStates: settings.hiddenStates,
       refreshMinutes: settings.refreshMinutes,
       boards: await readBoards()
@@ -641,6 +644,9 @@ export default function activate(orca: OrcaWorkerApi): void {
       throw invalid('stripAreaPrefix must be a boolean')
     }
     if (prefs.hideClosed !== undefined && !isHideClosed(prefs.hideClosed)) throw invalid('unknown hideClosed')
+    if (prefs.hideAssigned !== undefined && typeof prefs.hideAssigned !== 'boolean') {
+      throw invalid('hideAssigned must be a boolean')
+    }
     if (prefs.allProjects !== undefined && typeof prefs.allProjects !== 'boolean') {
       throw invalid('allProjects must be a boolean')
     }
@@ -684,6 +690,9 @@ export default function activate(orca: OrcaWorkerApi): void {
     }
     if (prefs.hideClosed !== undefined && prefs.hideClosed !== current.hideClosed) {
       await orca.settings.set('hideClosed', prefs.hideClosed)
+    }
+    if (prefs.hideAssigned !== undefined && prefs.hideAssigned !== current.hideAssigned) {
+      await orca.settings.set('hideAssigned', prefs.hideAssigned)
     }
     if (prefs.refreshMinutes !== undefined && prefs.refreshMinutes !== current.refreshMinutes) {
       await orca.settings.set('refreshMinutes', prefs.refreshMinutes)

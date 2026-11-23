@@ -119,6 +119,10 @@ type Messages = {
   tabsLabel: string
   tabAssigned: (n: number | null) => string
   tabBoard: string
+  tabBoards: string
+  hideAssignedLabel: string
+  hideAssignedHelp: string
+  assignedHidden: string
   loadingBoard: string
   boardNotConfiguredTitle: string
   boardNotConfiguredBody: string
@@ -235,6 +239,10 @@ const EN: Messages = {
   tabsLabel: 'View',
   tabAssigned: (n) => (n === null ? 'Assigned to me' : `Assigned to me · ${n}`),
   tabBoard: 'Board',
+  tabBoards: 'Boards',
+  hideAssignedLabel: 'Hide the Assigned to me tab',
+  hideAssignedHelp: 'Shows only the boards you added.',
+  assignedHidden: 'Assigned to me hidden',
   loadingBoard: 'Loading board',
   boardNotConfiguredTitle: 'Add a team board',
   boardNotConfiguredBody: 'Each board you add gets its own tab with every item of the team’s current iteration.',
@@ -387,6 +395,10 @@ const PT: Messages = {
   tabsLabel: 'Visão',
   tabAssigned: (n) => (n === null ? 'Atribuídos a mim' : `Atribuídos a mim · ${n}`),
   tabBoard: 'Board',
+  tabBoards: 'Boards',
+  hideAssignedLabel: 'Ocultar a aba Atribuídos a mim',
+  hideAssignedHelp: 'Mostra só os boards adicionados.',
+  assignedHidden: 'Atribuídos a mim oculta',
   loadingBoard: 'Carregando board',
   boardNotConfiguredTitle: 'Adicione o board de um time',
   boardNotConfiguredBody: 'Cada board adicionado ganha uma aba com todos os itens da iteração atual do time.',
@@ -501,6 +513,9 @@ type Screen = { kind: 'loading' } | { kind: 'config' } | { kind: 'main' }
  * while no board is registered, with its empty state.
  */
 type TabId = string
+const NO_BOARD_TAB = 'board'
+/** The value of the top-level Boards tab; the board shown is in `activeTab`. */
+const BOARDS_TAB = 'boards'
 type BoardData = Extract<BoardResult, { ok: true }>
 
 /** What one tab shows. Each tab owns its data and loads it when first shown. */
@@ -532,7 +547,10 @@ type Options<T> = { key: string } & (
 type BoardPick = { project: Project | null; team: Team | null }
 
 /** What the config screen edits until Save; the PAT and the grouping are not part of it. */
-type Draft = Pick<ConfigView, 'allProjects' | 'projects' | 'stripAreaPrefix' | 'hideClosed' | 'refreshMinutes' | 'boards'>
+type Draft = Pick<
+  ConfigView,
+  'allProjects' | 'projects' | 'stripAreaPrefix' | 'hideClosed' | 'hideAssigned' | 'refreshMinutes' | 'boards'
+>
 
 /**
  * The most Orca allows. The board's longest chain is five calls in a row in the worker (the board
@@ -565,6 +583,8 @@ const assignedBusy = atom(false)
 const boardBusy = atom<Record<string, boolean>>({})
 /** The tab that is shown; kept across runs. */
 const activeTab = atom<TabId>('activeTab', 'assigned', { persist: 'plugin' })
+/** The board last shown, which the Boards tab opens again; kept across runs. */
+const lastBoardTab = atom<TabId>('lastBoardTab', NO_BOARD_TAB, { persist: 'plugin' })
 /** The error the last Connect got, shown on the config screen. */
 const formError = atom<ListError | null>(null)
 const notice = atom<string | null>(null)
@@ -643,7 +663,7 @@ function listInputsChanged(a: ConfigView, b: ConfigView): boolean {
   )
 }
 
-const NO_BOARD: TabId = 'board'
+const NO_BOARD: TabId = NO_BOARD_TAB
 const BOARD_PREFIX = 'board-'
 
 function boardTab(teamId: string): TabId {
@@ -655,22 +675,27 @@ function teamOf(tab: TabId): string | null {
   return tab.startsWith(BOARD_PREFIX) ? tab.slice(BOARD_PREFIX.length) : null
 }
 
-/** The tabs in order: Assigned to me, then one per registered board, or the no-board tab. */
+/**
+ * The views in order: Assigned to me (unless hidden), then one per registered board, or the
+ * no-board view.
+ */
 function tabsOf(view: ConfigView | null): TabId[] {
   const boards = view?.boards ?? []
-  return ['assigned', ...(boards.length > 0 ? boards.map((b) => boardTab(b.teamId)) : [NO_BOARD])]
+  const assigned = view?.hideAssigned ? [] : ['assigned']
+  return [...assigned, ...(boards.length > 0 ? boards.map((b) => boardTab(b.teamId)) : [NO_BOARD])]
 }
 
 /**
- * The tab to show for a stored choice: itself while it exists; a removed board (or `board`, the
- * single tab of earlier versions) falls to the first board, else to Assigned to me.
+ * The view to show for a stored choice: itself while it exists; a removed board (or `board`, the
+ * single tab of earlier versions) falls to the first board, else to Assigned to me; a hidden
+ * Assigned to me falls to the first board, else to the no-board view.
  */
 function resolveTab(tab: TabId, view: ConfigView | null): TabId {
   const tabs = tabsOf(view)
   if (tabs.includes(tab)) return tab
   const firstBoard = view?.boards[0]
-  if (teamOf(tab) !== null || tab === NO_BOARD) return firstBoard ? boardTab(firstBoard.teamId) : 'assigned'
-  return 'assigned'
+  if (firstBoard && (teamOf(tab) !== null || tab === NO_BOARD || view?.hideAssigned)) return boardTab(firstBoard.teamId)
+  return tabs[0]!
 }
 
 /** The tab that is shown. */
@@ -750,6 +775,7 @@ function showConfig(unfoldBoard = false): void {
           projects: current.projects,
           stripAreaPrefix: current.stripAreaPrefix,
           hideClosed: current.hideClosed,
+          hideAssigned: current.hideAssigned,
           refreshMinutes: current.refreshMinutes,
           boards: current.boards
         }
@@ -907,9 +933,11 @@ function invalidate(tab: TabId): void {
   else if (tab === 'assigned') set(assignedState, { kind: 'idle' })
 }
 
+/** Shows a view; `boards` (the top-level Boards tab) opens the board last shown. */
 function selectTab(value: string): void {
-  const tab = resolveTab(value, read(config))
+  const tab = resolveTab(value === BOARDS_TAB ? read(lastBoardTab) : value, read(config))
   set(activeTab, tab)
+  if (teamOf(tab) !== null) set(lastBoardTab, tab)
   if (stateOf(tab).kind === 'idle' && isConnected(read(config))) void loadTab(tab)
 }
 
@@ -1541,7 +1569,11 @@ function ConfigScreen() {
             <BoardSection />
             <Collapsible
               title={m.displaySection}
-              description={[edits.stripAreaPrefix ? m.prefixRemoved : m.prefixKept, m.hideClosedSummary[edits.hideClosed]]
+              description={[
+                edits.stripAreaPrefix ? m.prefixRemoved : m.prefixKept,
+                m.hideClosedSummary[edits.hideClosed],
+                edits.hideAssigned ? m.assignedHidden : ''
+              ]
                 .filter(Boolean)
                 .join(' · ')}
             >
@@ -1553,6 +1585,14 @@ function ConfigScreen() {
                 />
                 <Text muted size="xs">
                   {m.stripPrefixHelp}
+                </Text>
+                <Switch
+                  label={m.hideAssignedLabel}
+                  checked={edits.hideAssigned}
+                  onChange={(checked) => editDraft({ hideAssigned: checked })}
+                />
+                <Text muted size="xs">
+                  {m.hideAssignedHelp}
                 </Text>
                 <Row align="center" justify="between" gap="xs">
                   <Text size="sm">{m.hideClosedLabel}</Text>
@@ -2467,30 +2507,52 @@ function BoardTab({ teamId }: { teamId: string }) {
   return <BoardView teamId={teamId} data={state.data} />
 }
 
+/**
+ * The boards: one button per board (wrapping, so any number fits any width; hidden for a single
+ * board) above the board shown, or the no-board view.
+ */
+function BoardsView() {
+  const boards = read(config)?.boards ?? []
+  const team = teamOf(currentTab())
+  if (boards.length === 0 || team === null) return <NoBoardTab />
+  return (
+    <Stack gap="xs">
+      {boards.length > 1 ? (
+        <Row gap="xs" wrap align="center">
+          {boards.map((board) => (
+            <Button
+              key={board.teamId}
+              size="sm"
+              variant={board.teamId === team ? 'solid' : 'ghost'}
+              tooltip={`${board.teamName} · ${board.projectName} · ${board.boardName}`}
+              onPress={() => selectTab(boardTab(board.teamId))}
+            >
+              {boardTabLabel(board, boards)}
+            </Button>
+          ))}
+        </Row>
+      ) : null}
+      <BoardTab key={team} teamId={team} />
+    </Stack>
+  )
+}
+
 function Main() {
   const m = t()
   const state = read(assignedState)
-  const boards = read(config)?.boards ?? []
+  const view = read(config)
   const tab = currentTab()
+  // Hidden Assigned to me: only the boards, without a tab bar of one tab.
+  if (view?.hideAssigned) return <BoardsView />
+  const top = tab === 'assigned' ? 'assigned' : BOARDS_TAB
   return (
-    <Tabs label={m.tabsLabel} value={tab} onChange={selectTab}>
+    <Tabs label={m.tabsLabel} value={top} onChange={selectTab}>
       <Tab value="assigned" icon="check" label={m.tabAssigned(state.kind === 'list' ? state.items.length : null)}>
-        {tab === 'assigned' ? <AssignedTab /> : null}
+        {top === 'assigned' ? <AssignedTab /> : null}
       </Tab>
-      {boards.length === 0 ? (
-        <Tab value={NO_BOARD} icon="blocks" label={m.tabBoard}>
-          {tab === NO_BOARD ? <NoBoardTab /> : null}
-        </Tab>
-      ) : (
-        boards.map((board) => {
-          const value = boardTab(board.teamId)
-          return (
-            <Tab key={value} value={value} icon="blocks" label={boardTabLabel(board, boards)}>
-              {tab === value ? <BoardTab teamId={board.teamId} /> : null}
-            </Tab>
-          )
-        })
-      )}
+      <Tab value={BOARDS_TAB} icon="blocks" label={m.tabBoards}>
+        {top === BOARDS_TAB ? <BoardsView /> : null}
+      </Tab>
     </Tabs>
   )
 }
