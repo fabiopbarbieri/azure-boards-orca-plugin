@@ -21,7 +21,7 @@
     },
     {
       "path": "assets/screenshots/02-board.png",
-      "alt": "Board: the team's current sprint in its own columns, with WIP limits and Doing/Done halves"
+      "alt": "Boards: a button per team board, and the current sprint in the board's own columns, with WIP limits and Doing/Done halves"
     },
     {
       "path": "assets/screenshots/03-item.png",
@@ -37,7 +37,7 @@
     },
     {
       "path": "assets/screenshots/06-config.png",
-      "alt": "Settings: connection, projects, board, display and refresh sections"
+      "alt": "Settings: the Boards section lists the added team boards with a remove button, and adds another by project and team"
     }
   ],
   "engines": {
